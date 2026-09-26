@@ -243,3 +243,91 @@ def test_a_wrong_token_is_refused(monkeypatch):
     monkeypatch.setattr(app_module, "API_TOKEN", "s3cret")
     with TestClient(app_module.app) as guarded:
         assert guarded.get("/videos", headers={"x-core-token": "wrong"}).status_code == 401
+
+
+def test_the_video_list_is_an_envelope(client, record_on_disk):
+    """AT-41 shape: a bare list would break every caller on empty."""
+    body = client.get("/videos").json()
+    assert isinstance(body["videos"], list)
+    assert {v["video_id"] for v in body["videos"]} == {record_on_disk["video_id"]}
+
+
+def test_the_chunk_page_is_an_envelope(client, record_on_disk):
+    body = client.get(f"/videos/{record_on_disk['video_id']}/chunks").json()
+    for field in ("video_id", "analyzers", "total", "offset", "limit", "chunks"):
+        assert field in body, field
+
+
+def test_an_unknown_chunk_of_a_known_recording_is_a_404(client, record_on_disk):
+    response = client.get(f"/videos/{record_on_disk['video_id']}/chunks/99")
+    assert response.status_code == 404
+
+
+def test_aggregates_list_the_stored_names(client, record_on_disk):
+    body = client.get(f"/videos/{record_on_disk['video_id']}/aggregates").json()
+    assert body["video_id"] == record_on_disk["video_id"]
+    assert body["available"] == [] and body["aggregates"] == {}
+
+
+def test_an_unknown_aggregate_names_what_is_stored(client, record_on_disk):
+    """The 400 has to say what exists, or the caller cannot recover."""
+    response = client.get(
+        f"/videos/{record_on_disk['video_id']}/aggregates?aggregator=summary"
+    )
+    assert response.status_code == 400
+    assert "summary" in response.json()["detail"]
+
+
+def test_entities_of_an_unknown_recording_is_a_404(client):
+    assert client.get("/videos/0000000000000000/entities").status_code == 404
+
+
+def test_entities_without_the_aggregate_is_a_client_error(client, record_on_disk):
+    response = client.get(f"/videos/{record_on_disk['video_id']}/entities")
+    assert response.status_code == 400
+
+
+def test_a_search_for_an_unknown_analyzer_names_the_problem(client):
+    response = client.post("/query", json={"text": "anything", "analyzer": "nope"})
+    assert response.status_code == 400
+    assert "nope" in response.json()["detail"]
+
+
+def test_a_search_in_an_unknown_field_names_the_problem(client):
+    response = client.post("/query", json={"text": "anything", "field": "nope"})
+    assert response.status_code == 400
+    assert "nope" in response.json()["detail"]
+
+
+def test_a_search_at_an_unknown_detail_names_the_problem(client):
+    response = client.post("/query", json={"text": "anything", "detail": "nope"})
+    assert response.status_code == 400
+    assert "nope" in response.json()["detail"]
+
+
+def test_a_question_for_an_unknown_analyzer_is_rejected(client):
+    response = client.post("/ask", json={"question": "what?", "analyzer": "nope"})
+    assert response.status_code == 400
+
+
+def test_ingesting_a_non_http_url_is_rejected_before_any_job(client):
+    response = client.post("/videos/url", json={"url": "file:///etc/passwd"})
+    assert response.status_code == 400
+
+
+def test_ingesting_with_an_unknown_analyzer_is_rejected_before_any_job(client):
+    response = client.post(
+        "/videos/url",
+        json={"url": "http://example.invalid/clip.mp4", "analyzers": "nope"},
+    )
+    assert response.status_code == 400
+    assert "nope" in response.json()["detail"]
+
+
+def test_deleting_an_unknown_recording_is_a_404(client):
+    assert client.delete("/videos/0000000000000000").status_code == 404
+
+
+def test_running_aggregates_for_an_unknown_recording_is_a_404(client):
+    response = client.post("/videos/0000000000000000/aggregates")
+    assert response.status_code == 404
