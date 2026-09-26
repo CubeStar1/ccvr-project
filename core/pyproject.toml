@@ -1,7 +1,7 @@
 [project]
 name = "core"
 version = "0.1.0"
-description = "Add your description here"
+description = "FalconVQA video RAG engine: chunk, analyse, aggregate, search and ask"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
