@@ -20,3 +20,6 @@ runs/
 uv.lock
 docs/
 CLAUDE.md
+
+# Weights are fetched in the Dockerfile; never ship a dev-machine copy.
+yolo11n.pt

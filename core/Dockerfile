@@ -52,10 +52,13 @@ RUN uv pip install -r requirements.txt
 
 COPY . .
 
-# YOLO weights are baked in and kept OUT of /data: object_detect.py reads them
-# from MODEL_DIR, and /data is a mounted volume that would shadow anything the
-# image put there. Everything genuinely stateful goes under /data instead.
-RUN mkdir -p /opt/models && mv yolo11n.pt /opt/models/ 2>/dev/null || true
+# YOLO weights are fetched at build time (byte-identical to the file previously
+# committed) and kept OUT of /data: object_detect.py reads them from MODEL_DIR,
+# and /data is a mounted volume that would shadow anything the image put there.
+# Everything genuinely stateful goes under /data instead.
+RUN mkdir -p /opt/models && \
+    curl -fsSL -o /opt/models/yolo11n.pt \
+        https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.pt
 
 ENV VIDEOMIND_DATA=/data \
     VIDEOMIND_MODELS=/opt/models \
