@@ -527,7 +527,7 @@ chunk 12 of another — which is why vectors are keyed on `start`/`end` and
 `chunk_config` instead.
 
 **analyzer** — one analysis pass, bundling its own frame sampling, prompt and
-output shape. Registered in `videomind/analyzers/__init__.py`; adding one
+output shape. Registered in `src/analyzers/__init__.py`; adding one
 requires no changes to ingest, the vector store, or these endpoints.
 
 | id | needs | produces |

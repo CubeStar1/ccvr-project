@@ -22,8 +22,8 @@ MCP client that has no use for HTML. It drops the `/` route and nothing else.
 Equivalent, invoking uvicorn directly:
 
 ```bash
-python -m uvicorn videomind.api.app:app --port 8077
-VIDEOMIND_UI=0 python -m uvicorn videomind.api.app:app --port 8077   # API only
+python -m uvicorn src.api.app:app --port 8077
+VIDEOMIND_UI=0 python -m uvicorn src.api.app:app --port 8077   # API only
 ```
 
 `--api-only` sets `VIDEOMIND_UI=0`; the variable exists because uvicorn's import
@@ -88,7 +88,7 @@ VIDEOMIND_DATA=/tmp/vm-test python serve.py --port 8078
 ### Clear one video instead of everything
 
 ```python
-from videomind.vectordb import ChunkStore
+from src.vectordb import ChunkStore
 cs = ChunkStore()
 cs.delete_video("95e110e25070fcfc")                        # every chunking
 cs.delete_video("95e110e25070fcfc", chunk_config="interval:10")  # just one
@@ -112,8 +112,8 @@ python -c "import json,glob; d=json.load(open(glob.glob('data/records/*.json')[0
 Vector store contents:
 
 ```python
-from videomind.vectordb import ChunkStore
-from videomind.vectordb.store import COLLECTION
+from src.vectordb import ChunkStore
+from src.vectordb.store import COLLECTION
 cs = ChunkStore()
 print(cs.count())
 pts, _ = cs.client.scroll(COLLECTION, limit=100, with_payload=True)

@@ -1,6 +1,6 @@
 # FalconVQA core — CPU-only image.
 #
-# Build:  docker build -t videomind-core core/
+# Build:  docker build -t falconvqa-core core/
 #
 # Torch comes from PyTorch's *cpu* index, not PyPI: the PyPI Linux wheel is the
 # CUDA build and drags in ~2.5 GB of nvidia-* runtime packages that nothing
@@ -82,5 +82,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=3 \
 # One worker, not negotiable: the embedded Qdrant store takes an exclusive
 # file lock on data/vectordb (vectordb/store.py), so a second worker in the
 # same container would fail every request that opens a ChunkStore.
-CMD ["uvicorn", "videomind.api.app:app", \
+CMD ["uvicorn", "src.api.app:app", \
      "--host", "0.0.0.0", "--port", "8077", "--workers", "1"]
