@@ -49,16 +49,20 @@ def test_presets_agree_when_only_one_signal_fired():
 
 def test_presets_diverge_when_the_distinguishing_signals_are_present():
     """The corollary: redistribution must not flatten a preset into a no-op when
-    the signals it weights differently actually fired."""
+    the signals it weights differently actually fired. Renormalised over the two
+    active signals the presets are speaker 0.7 / cut 0.3 vs speaker 0.3 / cut
+    0.7, so the threshold has to sit between 0.3 and 0.7 to distinguish them."""
     events = {
         "speaker": strong(10.0),
         "silence": [],
         "cut": strong(35.0),
         "semantic": [],
     }
-    audio = fuse(events, WEIGHTS["audio"], DURATION, threshold=0.30)
-    video = fuse(events, WEIGHTS["video"], DURATION, threshold=0.30)
+    audio = fuse(events, WEIGHTS["audio"], DURATION, threshold=0.50)
+    video = fuse(events, WEIGHTS["video"], DURATION, threshold=0.50)
     assert audio != video
+    assert len(audio) == 1 and audio[0] == pytest.approx(10.0, abs=0.11)
+    assert len(video) == 1 and video[0] == pytest.approx(35.0, abs=0.11)
 
 
 def test_no_events_at_all_yields_no_boundaries():

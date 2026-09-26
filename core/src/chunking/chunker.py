@@ -67,7 +67,10 @@ def fuse(
     weight * strength to a score curve over the whole clip, so boundaries
     agreed on by multiple sources reinforce each other. Peaks are then
     picked greedily, strongest first, enforcing `min_gap` between accepted
-    boundaries so we don't produce back-to-back tiny chunks.
+    boundaries so we don't produce back-to-back tiny chunks. A candidate must
+    also be a local maximum: the curve around a strong peak stays above
+    `threshold` wider than `min_gap`, and without this check the tails at
+    exactly +-min_gap are accepted as extra boundaries.
     """
     active = {source for source, source_events in events.items() if source_events}
     total = sum(weights.get(source, 0.0) for source in active)
@@ -85,9 +88,14 @@ def fuse(
             score += weight * strength * np.exp(-((grid - t) ** 2) / (2 * sigma ** 2))
 
     accepted: list[float] = []
+    last = len(grid) - 1
     for idx in np.argsort(score)[::-1]:
         if score[idx] < threshold:
             break
+        left_ok = idx == 0 or score[idx] >= score[idx - 1]
+        right_ok = idx == last or score[idx] >= score[idx + 1]
+        if not (left_ok and right_ok):
+            continue
         t = grid[idx]
         if all(abs(t - a) >= min_gap for a in accepted):
             accepted.append(float(t))
