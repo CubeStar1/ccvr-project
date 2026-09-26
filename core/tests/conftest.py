@@ -1,6 +1,6 @@
 """Shared fixtures.
 
-Two things have to happen before `videomind` is imported anywhere, which is why
+Two things have to happen before `src` is imported anywhere, which is why
 they happen at module level here rather than in a fixture:
 
 1. `paths.py` reads every `VIDEOMIND_*` variable at import time, so redirecting
@@ -22,7 +22,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-_TEST_DATA = Path(tempfile.mkdtemp(prefix="videomind-tests-"))
+_TEST_DATA = Path(tempfile.mkdtemp(prefix="falconvqa-tests-"))
 os.environ["VIDEOMIND_DATA"] = str(_TEST_DATA)
 os.environ["VIDEOMIND_RECORDS"] = str(_TEST_DATA / "records")
 os.environ["VIDEOMIND_VECTORDB"] = str(_TEST_DATA / "vectordb")

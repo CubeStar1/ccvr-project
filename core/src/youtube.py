@@ -187,7 +187,7 @@ def download(url: str, max_bytes: int):
     still the hash of the bytes.
     """
     YoutubeDL = _ydl()
-    dest = Path(tempfile.mkdtemp(prefix="videomind-yt-"))
+    dest = Path(tempfile.mkdtemp(prefix="falconvqa-yt-"))
     try:
         with YoutubeDL(_options(dest, max_bytes)) as ydl:
             try:
