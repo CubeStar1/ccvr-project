@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 from . import youtube
+from .log import log
 from .paths import CACHE_DIR, ensure as ensure_dirs
 
 load_dotenv()
@@ -90,7 +91,10 @@ def _exists(storage_path: str) -> bool:
     folder, _, name = storage_path.rpartition("/")
     try:
         return any(entry.get("name") == name for entry in _bucket().list(folder))
-    except Exception:
+    except Exception as exc:
+        # Treated as missing (the upload below will surface a real outage),
+        # but logged: auth/network errors used to masquerade as "not there".
+        log.warning("storage list %r failed, treating as missing: %s", folder, exc)
         return False
 
 

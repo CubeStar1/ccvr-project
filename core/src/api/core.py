@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 
 from .. import aggregators, analyzers, poster, store, storage, youtube
 from ..chunk import chunk_video
+from ..log import log
 from ..paths import CACHE_DIR, RECORDS_DIR, ensure as ensure_dirs
 from ..vectordb import ChunkStore, config_key
 
@@ -170,6 +171,7 @@ def upload(
         try:
             result["aggregated"] = run_aggregators(video_id, progress=progress)
         except Exception as exc:
+            log.warning("aggregates for %s failed, ingest continues: %s", video_id, exc)
             result["aggregated"] = {"error": f"{type(exc).__name__}: {exc}"}
 
     return result
@@ -190,7 +192,8 @@ def _write_poster(video_id: str, video_path: str) -> str | None:
         if not data:
             return None
         return storage.put_object(f"{video_id}/{POSTER_NAME}", data, "image/jpeg")
-    except Exception:
+    except Exception as exc:
+        log.warning("poster for %s skipped: %s", video_id, exc)
         return None
 
 
@@ -241,6 +244,7 @@ def delete_video(video_id: str) -> dict | None:
         storage.delete(objects)
     except Exception as exc:
         storage_error = f"{type(exc).__name__}: {exc}"
+        log.warning("bucket delete for %s failed: %s", video_id, storage_error)
 
     path.unlink(missing_ok=True)
     for cached in CACHE_DIR.glob(f"{video_id}.*"):

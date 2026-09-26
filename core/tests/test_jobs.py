@@ -126,6 +126,34 @@ def test_a_failure_keeps_a_traceback_for_the_defect_record():
     assert "Traceback" in job["detail"]["traceback"]
 
 
+def test_a_failure_is_logged_with_its_job_id():
+    """Failures happen on a thread nobody watches; the server log must say
+    which job died, not just the job record. (The falcon logger does not
+    propagate, so caplog cannot see it — attach a handler directly.)"""
+    import logging
+
+    records = []
+
+    class Capture(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    logger = logging.getLogger("falcon")
+    handler = Capture()
+    logger.addHandler(handler)
+    try:
+        def work(progress):
+            raise RuntimeError("unwatched-boom")
+
+        job_id = jobs.create()
+        jobs.run_in_background(job_id, work)
+        wait_for(job_id, "failed")
+    finally:
+        logger.removeHandler(handler)
+
+    assert any(job_id in record.getMessage() for record in records)
+
+
 def test_arguments_reach_the_work():
     job_id = jobs.create()
     jobs.run_in_background(job_id, lambda source, progress, depth=1: {"source": source, "depth": depth},
