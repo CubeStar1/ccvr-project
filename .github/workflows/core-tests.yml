@@ -1,0 +1,35 @@
+name: core tests
+
+on:
+  push:
+    paths:
+      - "core/**"
+      - ".github/workflows/core-tests.yml"
+  pull_request:
+    paths:
+      - "core/**"
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up uv + Python 3.13
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: uv sync --locked
+        working-directory: core
+
+      - name: Check requirements.txt mirrors pyproject.toml
+        run: python3 scripts/check_deps.py
+        working-directory: core
+
+      - name: Run pytest
+        run: uv run pytest tests/ -q
+        working-directory: core

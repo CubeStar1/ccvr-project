@@ -1,5 +1,4 @@
-from scenedetect import ContentDetector, detect
-from scenedetect.frame_timecode import FrameTimecode
+from scenedetect import ContentDetector, FrameTimecode, detect
 
 SceneList = list[tuple[FrameTimecode, FrameTimecode]]
 

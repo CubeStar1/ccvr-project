@@ -3,6 +3,8 @@ import traceback
 import uuid
 from datetime import datetime, timezone
 
+from ..log import log
+
 _jobs: dict[str, dict] = {}
 _lock = threading.Lock()
 
@@ -60,6 +62,7 @@ def run_in_background(job_id: str, fn, *args, **kwargs) -> None:
             result = fn(*args, progress=progress, **kwargs)
             update(job_id, status="done", stage="complete", result=result)
         except Exception as exc:
+            log.exception("job %s failed in %s", job_id, getattr(fn, "__name__", fn))
             update(
                 job_id,
                 status="failed",

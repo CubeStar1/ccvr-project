@@ -108,7 +108,7 @@ entity narratives, "what is unusual" reaches novelty.
 
 ```
 serve.py            entry point
-videomind/
+src/
   paths.py          every path, overridable by environment variable
   chunk.py          chunking modes
   chunking/         boundary fusion

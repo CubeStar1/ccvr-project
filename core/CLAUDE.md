@@ -14,10 +14,10 @@ by FastAPI with a web UI, and designed so an LLM agent can drive it.
 - **Python 3.13.6, torch 2.11.0+cu130, RTX 4060 (8 GB).** This combination
   works; it is newer than most guides assume. Do not downgrade to "known good"
   versions without a measured reason.
-- **`USE_TF=0` is set in `videomind/__init__.py`**, before anything imports
+- **`USE_TF=0` is set in `src/__init__.py`**, before anything imports
   transformers. Without it transformers imports TensorFlow, costing seconds of
   startup and a wall of oneDNN/absl banners, for a backend nothing here uses.
-  It is in the package root because `uvicorn videomind.api.app:app` imports the
+  It is in the package root because `uvicorn src.api.app:app` imports the
   package before any submodule.
 - **The torchcodec warning is filtered, not fixed.** pyannote warns that it
   cannot load torchcodec's FFmpeg DLLs. Audio is decoded with PyAV and handed

@@ -1,7 +1,7 @@
 [project]
 name = "core"
 version = "0.1.0"
-description = "Add your description here"
+description = "FalconVQA video RAG engine: chunk, analyse, aggregate, search and ask"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -45,6 +45,11 @@ testpaths = ["tests"]
 # but happens once per session. Nothing here loads an embedding model or opens
 # a video; the cases that need a GPU and a live provider are the manual ones.
 addopts = "-q --strict-markers"
+filterwarnings = [
+    # Third-party noise: the installed starlette emits this on fastapi's own
+    # TestClient import; nothing in this repo can fix it.
+    "ignore:Using `httpx` with `starlette.testclient`.*:Warning",
+]
 
 [tool.uv]
 # PyTorch ships macOS wheels for Apple Silicon only, so Intel Macs are left out

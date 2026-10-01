@@ -14,6 +14,7 @@ from qdrant_client.models import (
     VectorParams,
 )
 
+from ..log import log
 from ..paths import VECTOR_DIR, ensure as ensure_dirs
 from .embedder import DEFAULT_MODEL, get_embedder
 from .render import VECTOR_FIELDS
@@ -151,8 +152,12 @@ class ChunkStore:
                     self.client.create_payload_index(
                         COLLECTION, field_name=field, field_schema=schema
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # Creating an index that already exists raises; anything
+                    # else is unexpected but not fatal, since filtering stays
+                    # correct (it just scans). Either way this must be visible:
+                    # the previous bare `pass` hid real Qdrant errors here.
+                    log.debug("payload index %r skipped: %s", field, exc)
 
     def add_chunks(
         self,

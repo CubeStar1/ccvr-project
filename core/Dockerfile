@@ -1,6 +1,6 @@
 # FalconVQA core — CPU-only image.
 #
-# Build:  docker build -t videomind-core core/
+# Build:  docker build -t falconvqa-core core/
 #
 # Torch comes from PyTorch's *cpu* index, not PyPI: the PyPI Linux wheel is the
 # CUDA build and drags in ~2.5 GB of nvidia-* runtime packages that nothing
@@ -52,10 +52,13 @@ RUN uv pip install -r requirements.txt
 
 COPY . .
 
-# YOLO weights are baked in and kept OUT of /data: object_detect.py reads them
-# from MODEL_DIR, and /data is a mounted volume that would shadow anything the
-# image put there. Everything genuinely stateful goes under /data instead.
-RUN mkdir -p /opt/models && mv yolo11n.pt /opt/models/ 2>/dev/null || true
+# YOLO weights are fetched at build time (byte-identical to the file previously
+# committed) and kept OUT of /data: object_detect.py reads them from MODEL_DIR,
+# and /data is a mounted volume that would shadow anything the image put there.
+# Everything genuinely stateful goes under /data instead.
+RUN mkdir -p /opt/models && \
+    curl -fsSL -o /opt/models/yolo11n.pt \
+        https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.pt
 
 ENV VIDEOMIND_DATA=/data \
     VIDEOMIND_MODELS=/opt/models \
@@ -82,5 +85,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=3 \
 # One worker, not negotiable: the embedded Qdrant store takes an exclusive
 # file lock on data/vectordb (vectordb/store.py), so a second worker in the
 # same container would fail every request that opens a ChunkStore.
-CMD ["uvicorn", "videomind.api.app:app", \
+CMD ["uvicorn", "src.api.app:app", \
      "--host", "0.0.0.0", "--port", "8077", "--workers", "1"]

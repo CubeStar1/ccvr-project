@@ -18,6 +18,10 @@ venv/
 .pytest_cache/
 .ruff_cache/
 
+# Model weights are fetched, not committed: ultralytics auto-downloads
+# yolo11n.pt on first use (dev) and the Docker image bakes it in (prod).
+yolo*.pt
+
 # Model caches these libraries create outside data/
 .paddlex/
 runs/
