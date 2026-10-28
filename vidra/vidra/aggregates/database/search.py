@@ -1,0 +1,48 @@
+"""Search what the aggregates embedded: which video, which part, who.
+
+    aggregates.search("the reactor explosion", level="source")   # which video
+    aggregates.search("the reactor explosion", level="span")     # which part
+    aggregates.search("woman with long pink hair", level="entity")  # who
+
+Each level is searched alone. Every result names its source and the videos it
+covers.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Optional, Sequence
+
+from vidra.shared.reporting.errors import Refused
+from vidra.shared.models.base import require
+from vidra.shared.models.roles import Models, given, resolve
+from .export import LEVELS
+
+
+def search(query: str, level: str = "source", limit: int = 5,
+           source_ids: Optional[Sequence[str]] = None,
+           database: Optional[Any] = None,
+           models: Optional[Models] = None) -> list[dict[str, Any]]:
+    """Ranked summaries (`source`), chapters (`span`) or entities (`entity`).
+
+    `models.embedder` must be the one the aggregates were exported with. `source_ids=None` is every source. Each result has `source_id`,
+    `video_ids`, `aggregate_id`, `item_id`, `content`, `start_ts`/`end_ts` where
+    it has a span, and its ranks.
+    """
+    from vidra.shared.models import embedders
+    from vidra.shared.storage.database import searched
+
+    if level not in LEVELS:
+        raise Refused(f"unknown level {level!r}; known: {', '.join(LEVELS)}")
+    if not str(query or "").strip():
+        raise Refused("a search needs a query; this one is empty")
+    if limit < 1:
+        raise Refused("limit must be 1 or more")
+    built = resolve("embedder", given(models).embedder)
+    require("embedder", built)
+    # Some models embed a query differently from a passage.
+    vector = embedders.query_vector(built, query)
+    return searched(database).search_aggregates(
+        vector, query, built.key, level, limit, source_ids)
+
+
+__all__ = ["LEVELS", "search"]

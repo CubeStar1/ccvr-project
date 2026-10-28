@@ -25,6 +25,10 @@ import { cn } from '@/lib/utils'
 import { verifyOtp } from '@/actions/auth'
 import { toast } from 'sonner'
 import { usePathname, useRouter } from 'next/navigation'
+
+/** Must match Authentication → Email → "Email OTP Length" in Supabase (8 by default now). */
+const OTP_LENGTH = 8
+
 const FormSchema = z
   .object({
     email: z.string().email({
@@ -232,9 +236,9 @@ export default function SignUp({ redirectTo }: { redirectTo: string }) {
           <InputOTP
             pattern={REGEXP_ONLY_DIGITS}
             id="input-otp"
-            maxLength={6}
+            maxLength={OTP_LENGTH}
             onChange={async (value) => {
-              if (value.length === 6) {
+              if (value.length === OTP_LENGTH) {
                 document.getElementById('input-otp')?.blur()
                 const res = await verifyOtp({
                   email: form.getValues('email'),
@@ -252,15 +256,15 @@ export default function SignUp({ redirectTo }: { redirectTo: string }) {
             }}
           >
             <InputOTPGroup>
-              <InputOTPSlot index={0} className={inputOptClass} />
-              <InputOTPSlot index={1} className={inputOptClass} />
-              <InputOTPSlot index={2} className={inputOptClass} />
+              {Array.from({ length: OTP_LENGTH / 2 }, (_, i) => (
+                <InputOTPSlot key={i} index={i} className={inputOptClass} />
+              ))}
             </InputOTPGroup>
             <InputOTPSeparator />
             <InputOTPGroup>
-              <InputOTPSlot index={3} className={inputOptClass} />
-              <InputOTPSlot index={4} className={cn(inputOptClass)} />
-              <InputOTPSlot index={5} className={cn(inputOptClass)} />
+              {Array.from({ length: OTP_LENGTH / 2 }, (_, i) => (
+                <InputOTPSlot key={i} index={OTP_LENGTH / 2 + i} className={inputOptClass} />
+              ))}
             </InputOTPGroup>
           </InputOTP>
           <div className="text-sm flex gap-2">
