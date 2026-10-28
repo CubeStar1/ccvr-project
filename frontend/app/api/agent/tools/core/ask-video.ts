@@ -8,7 +8,7 @@ export function createAskVideoTool(context: VideoToolContext) {
   return tool({
     description:
       'Ask a question about the project\'s videos and get an answer grounded in what was actually said and shown, plus the source moments. ' +
-      'This is your default for "what / why / how / summarize" questions. It is stronger than searching moments because the question is routed to whichever video-level results can address it — entity narratives for questions about a person, novelty for "what stands out", statistics for counts — and those contain cross-segment reasoning that reading chunks one at a time cannot recover.',
+      'This is your default for "what / why / how / summarize" questions. It is stronger than searching moments because the question is routed to whichever video-level results can address it — entity narratives for questions about a person, events and chapters for "what happened", statistics for counts — and those contain cross-segment reasoning that reading chunks one at a time cannot recover.',
     inputSchema: z.object({
       question: z.string().describe('The question, phrased in full'),
       video_ids: z

@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=77"]          # 77: `license` as an SPDX expression (PEP 639)
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vidra"
+version = "3.0.0"
+description = "Video and audio in, searchable moments out."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+
+dependencies = [
+    "av>=15",
+    "opencv-python>=5",
+    "numpy>=2",
+    "python-dotenv",
+    "jsonschema",
+    "openai",
+    "supabase",
+]
+
+[project.optional-dependencies]
+local = [
+    "torch>=2.4",
+    "transformers>=4.44",
+    "ultralytics>=8.3",
+    "sentence-transformers",
+    "gliner",
+]
+audio = [
+    "faster-whisper",
+    "pyannote.audio>=4.0",
+    "nvidia-cublas-cu12; sys_platform != 'darwin'",
+    "nvidia-cudnn-cu12>=9,<10; sys_platform != 'darwin'",
+]
+all = ["vidra[local,audio]"]
+
+[tool.setuptools.package-data]
+"vidra" = ["py.typed"]
+"vidra.video_rag.core.describe" = ["prompts.json"]
+"vidra.aggregates.definitions" = ["definitions.json"]
+
+[tool.setuptools.packages.find]
+include = ["vidra*"]
+exclude = ["eval*", "db*", "data*", "samples*"]

@@ -110,7 +110,7 @@ Default video_ids when the user does not name one: [${scope.map((id) => `"${id}"
 Each video was cut into chunks, and one or more **analyzers** ran on every chunk:
 \`default_video\` (what is shown), \`transcript\` / \`diarization\` (what is said, the latter with speaker labels), \`ocr\` (text on screen), \`people\` (who is present), \`object_detection\` (objects). Only the analyzers listed against a video above are available for it.
 
-Separately, **video-level passes** ran over the whole video at once — summaries, chapters, events, statistics, named entities, novelty, linked people. These hold cross-segment conclusions that no single moment contains, and they are usually a better answer than retrieving ten moments and reasoning over them yourself.
+Separately, **video-level passes** ran over the whole video at once — summaries, chapters, events, statistics, named entities, sentiment, linked people and objects. These hold cross-segment conclusions that no single moment contains, and they are usually a better answer than retrieving ten moments and reasoning over them yourself.
 
 ## Choosing a tool
 

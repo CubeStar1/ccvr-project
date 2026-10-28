@@ -1,0 +1,31 @@
+
+# Core -- reading video and the uniform sampler.
+av==18.1.0                 # decode + exact PTS/time_base; OpenCV cannot expose either
+opencv-python==5.0.0.93    # colour, resize, JPEG, rotation, scene scores, the text detector
+numpy==2.4.4
+python-dotenv              # .env
+jsonschema                 # schemas.validate(deep=True)
+
+# Model-backed samplers and the local models.
+torch==2.13.0              # clip, yolo, objects, the local embedder
+transformers==5.15.0       # clip, yolo (CLIP image tower), sentiment
+ultralytics==8.4.120       # yolo, objects (YOLO / YOLO-World)
+gliner                     # the ner aggregate
+sentence-transformers      # the `local` embedder
+
+# --- models: describe, the llm aggregates, embed and retrieve
+# `openai` is the client for every OpenAI-compatible provider too -- Ollama,
+# LM Studio, Gemini, Mistral, Groq, OpenRouter, Voyage. Anthropic goes through
+# `httpx`, which `openai` already installs.
+openai
+
+# --- where a copy of a document goes; the files need nothing
+supabase
+
+# --- audio
+faster-whisper
+pyannote.audio>=4.0        # 3.x reads torchaudio.AudioMetaData, gone in torchaudio 2.9
+# CTranslate2, under faster-whisper, loads CUDA 12's cuBLAS and cuDNN 9 by name
+# on a GPU; torch ships only its own CUDA's. Not on macOS, which has no CUDA.
+nvidia-cublas-cu12; sys_platform != 'darwin'
+nvidia-cudnn-cu12>=9,<10; sys_platform != 'darwin'

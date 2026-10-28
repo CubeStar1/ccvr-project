@@ -1,2 +1,11 @@
 datasets
 ccvr/report
+.env
+.env.*
+!.env.example
+backend/data/
+backend/.venv/
+# Model weights, downloaded on first use
+*.pt
+__pycache__/
+.DS_Store

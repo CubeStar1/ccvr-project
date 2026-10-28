@@ -16,25 +16,24 @@ with timestamps and playable clips.
 
 ![Agent chat with clip retrieval](frontend/public/landing/falconvqa-agent.png)
 
-- **core/** — the video RAG engine. Chunks a video, runs analyzers per chunk, aggregates to
-  video level, indexes it all, then searches or answers questions over it. FastAPI + its own
-  web UI on `:8077`
+- **vidra/** — the video RAG library (VIDRA): chunks a video, keeps and describes frames,
+  transcribes the audio, embeds it all, searches it, and aggregates to video level
+- **backend/** — a FastAPI server on `:8077` that puts VIDRA behind the HTTP API the frontend
+  calls (`frontend/lib/core/client.ts`)
 - **frontend/** — Next.js app: projects, upload, agent chat (AI SDK), clip artifact panel,
   and the documentation site at `/docs`
-- **datasets/** — the test videos
 - **latex/** — the report
 
 ```
-Next.js  ──►  /api/agent (AI SDK tools)  ──►  core (FastAPI)  ──►  Qdrant + records
-   │                                             │
-   ├──► Supabase Storage (files → public URL)     └──► Supabase Storage (video bytes)
+Next.js  ──►  /api/agent (AI SDK tools)  ──►  backend (FastAPI)  ──►  vidra  ──►  backend/data/
+   │
+   ├──► Supabase Storage (uploads → public URL, handed to the backend)
    └──► Supabase DB (projects, conversations, messages, video_core)
 ```
 
-![Architecture](frontend/public/landing/falcon-vqa-arch.png)
-
-Everything except the vision-language calls and answer synthesis runs locally: BGE embeddings,
-Qdrant (embedded), Whisper, pyannote, Silero VAD, PySceneDetect, CLIP, YOLO and EasyOCR.
+Frame descriptions, embeddings, summaries and answers use OpenAI. Whisper, pyannote and the
+YOLO/CLIP samplers run locally (CUDA, Apple `mps`, or CPU). The search index is a folder per
+video under `backend/data/out/`.
 
 ---
 
@@ -42,39 +41,30 @@ Qdrant (embedded), Whisper, pyannote, Silero VAD, PySceneDetect, CLIP, YOLO and 
 
 | What | Notes |
 |---|---|
-| Python 3.13 + a CUDA GPU | For core. Developed on torch 2.11.0+cu130 and an RTX 4060 (8 GB) |
-| [uv](https://docs.astral.sh/uv/) | Manages core's Python environment |
+| Python 3.11–3.13 | uv installs 3.12 for you |
+| [uv](https://docs.astral.sh/uv/) and ffmpeg | `brew install uv ffmpeg` on macOS |
 | Node 20+ | For the frontend |
 | Supabase project | URL, anon key, and service-role key |
-| OpenAI API key | Core's VLM calls and answer synthesis |
+| OpenAI API key | VIDRA's vision, embedding and summary calls |
+| HF token | For pyannote's gated speaker model; accept its terms on Hugging Face first |
 | A model provider key | OpenAI / Google / Groq / Cerebras / xAI, or LM Studio locally, for the chat |
 
-## 2. core
+## 2. backend
 
 ```bash
-cd core
-uv sync                              # pulls torch from the CUDA 13.0 index on Linux/Windows
-cp .env.example .env                 # then fill in OPENAI_API_KEY, SUPABASE_URL, etc.
+cd backend
+uv sync                              # installs vidra (from ../vidra) with all extras
+# create backend/.env with OPENAI_API_KEY=... and HF_TOKEN=...
 
-uv run serve.py                      # http://127.0.0.1:8077
+uv run uvicorn app:app --port 8077   # http://127.0.0.1:8077
 ```
 
-`HF_TOKEN` is only needed for the `diarization` analyzer, and its model is gated — accept the
-terms at <https://huggingface.co/pyannote/speaker-diarization-community-1> first.
+Verify: http://127.0.0.1:8077/health → `status: "ok"` with the analyzers and aggregators.
+API docs: http://127.0.0.1:8077/docs.
 
-Video bytes live in a public Supabase Storage bucket named `videos`, created once per project:
-
-```python
-from supabase import create_client
-create_client(URL, SERVICE_ROLE_KEY).storage.create_bucket("videos", options={"public": True})
-```
-
-Verify: http://127.0.0.1:8077/health → `status: "ok"` with `storage.ok: true`, plus the
-analyzers and aggregators this instance loaded. `degraded` means the key is wrong or the bucket
-is missing — reads still work, ingest will not. API docs: http://127.0.0.1:8077/docs.
-
-`uv run serve.py --api-only` drops core's own web UI and nothing else, which is what you want
-behind the frontend.
+Optional environment: `VIDRA_TIER` (`free` | `local` | `llm`, default `llm`) caps which
+aggregators an ingest runs; `BACKEND_DATA` moves the data folder; `CORE_API_TOKEN` requires
+an `X-Core-Token` header matching the frontend's.
 
 ## 3. Database
 
@@ -100,11 +90,11 @@ Both servers need to be running: the frontend alone cannot ingest or retrieve.
 
 1. **Create a project** at `/projects` → "New Project". You land on the project workspace.
 2. **Upload videos** — Upload using the upload videos button. Drop files in, or paste direct video URLs. Files go
-   to Supabase Storage and core is handed the public URL; URLs core downloads itself. Pick the
-   analyzers and the chunking mode in the same dialog — the analyzer list is fetched from core,
-   not hardcoded.
+   to Supabase Storage and the backend is handed the public URL; URLs it downloads itself. Pick
+   the analyzers and the chunking mode in the same dialog — the analyzer list is fetched from
+   the backend, not hardcoded.
 3. **Wait for analysis.** Each card shows `queued` → `analyzing` (with the current stage) →
-   `ready`. The grid polls and reconciles against core's job. Analysis is genuinely slow —
+   `ready`. The grid polls and reconciles against the backend's job. Analysis is genuinely slow —
    several minutes for a short clip. Only `ready` videos are searchable.
 4. **Ask something** in the prompt box (or click a suggestion card). This creates a chat with
    every ready video in scope.
@@ -137,6 +127,7 @@ complete API reference.
 
 Alongside the code:
 
-- [core/README.md](core/README.md) — how the engine works
-- [core/docs/ENDPOINTS.md](core/docs/ENDPOINTS.md) — core's HTTP API
-- [core/docs/COMMANDS.md](core/docs/COMMANDS.md) — running, resetting, inspecting
+- [vidra/README.md](vidra/README.md) — the VIDRA library; open `vidra/docs/index.html` for its
+  full documentation
+- [backend/app.py](backend/app.py) — the HTTP API, and [backend/engine.py](backend/engine.py)
+  for how VIDRA's output maps onto it
