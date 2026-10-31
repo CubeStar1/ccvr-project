@@ -23,7 +23,7 @@ import { Input } from '@/components/ui/input'
 import { Slider } from '@/components/ui/slider'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
-import { uploadProjectVideo } from '@/lib/supabase/upload-project-video'
+import { uploadProjectVideo } from '@/lib/core/upload-video'
 import {
   ANALYZER_CATALOGUE,
   CHUNK_DEFAULTS,
@@ -151,8 +151,7 @@ export function UploadDialog({
         updateJob(id, { state: 'registering', message: 'Handing off for analysis…' })
         await registerVideo({
           title: uploaded.title,
-          sourceUrl: uploaded.publicUrl,
-          storagePath: uploaded.storagePath,
+          sourceUrl: uploaded.source,
           sourceType: 'upload',
           config: ingestConfig,
         })

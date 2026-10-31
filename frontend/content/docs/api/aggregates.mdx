@@ -190,6 +190,8 @@ curl -X POST "http://127.0.0.1:8077/videos/dbf7af7300ab2484/aggregates?force=tru
 {
   "video_id": "dbf7af7300ab2484",
   "ran": ["summary", "chapters"],
+  "aggregates": ["chapters", "coverage", "events", "ner", "sentiment", "speaker_stats",
+                 "stats", "summary", "text_entities"],
   "skipped": {}
 }
 ```
@@ -197,6 +199,7 @@ curl -X POST "http://127.0.0.1:8077/videos/dbf7af7300ab2484/aggregates?force=tru
 | Field | Meaning |
 |---|---|
 | `ran` | The aggregates handed their inputs this time |
+| `aggregates` | Everything now stored for the video |
 | `skipped` | `{name: reason}` for each one this video can't satisfy — for example `entities` without the `people` analyzer |
 
 <Callout type="info">

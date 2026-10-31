@@ -1,6 +1,6 @@
 ---
 title: Videos
-description: Reading and deleting a video, and its poster image.
+description: Reading, playing and deleting a video, and its poster image.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout'
@@ -15,10 +15,10 @@ One video's metadata.
 {
   "video_id": "dbf7af7300ab2484",
   "filename": "clip.mp4",
-  "video_url": "https://<project>.supabase.co/storage/v1/object/public/project-assets/…/clip.mp4",
+  "video_url": "http://127.0.0.1:8077/media/dbf7af7300ab2484",
   "poster_url": "http://127.0.0.1:8077/media/dbf7af7300ab2484/poster.jpg",
-  "storage_path": "/path/to/backend/data/sources/dbf7af7300ab2484.mp4",
-  "source_url": "https://<project>.supabase.co/storage/v1/object/public/project-assets/…/clip.mp4",
+  "storage_path": "sources/dbf7af7300ab2484.mp4",
+  "source_url": "upload:0fbf48df2a474577b5765d865c354b90",
   "size_bytes": 16135088,
   "preset": "audio_video",
   "params": { "mode": "preset", "preset": "audio_video" },
@@ -33,8 +33,9 @@ One video's metadata.
 
 | Field | Notes |
 |---|---|
-| `video_url`, `source_url` | Where it was ingested from. The video plays from here, so the URL must stay reachable |
-| `storage_path` | The backend's downloaded copy |
+| `video_url` | Where it plays from: this server's `GET /media/{video_id}` |
+| `source_url` | What it was ingested from: an `http(s)` URL, or `upload:<upload_id>` |
+| `storage_path` | The stored file, relative to the data folder (and its blob name) |
 | `chunk_config` | The chunking policy actually used: `scene`, `vad`, `speaker` or `uniform` |
 | `analyzers` | Which passes ran on this video — the predicate for "can it answer X?" |
 | `aggregates` | Which video-level results are stored |
@@ -51,21 +52,34 @@ One video's metadata.
 
 ## `DELETE /videos/{video_id}`
 
-Removes a video completely: its folder under `data/out/` (and with it the search index), the
-downloaded file, the poster and the ingest record.
+Removes a video completely: the stored file, its folder under `out/` (and with it the search
+index), the poster and the ingest record — locally and in blob storage.
 
 ```json
 { "video_id": "dbf7af7300ab2484", "deleted": true }
 ```
 
-The source URL is not touched — a file in Supabase Storage stays there until the frontend removes
-it.
+An `http(s)` source URL is someone else's and is not touched.
 
 <Callout type="warn">
   `video_id` is a content hash, so two callers who ingested the same bytes are referring to the
   **same** video. Whoever owns the application-side rows has to decide that nothing else still
   points at it before calling this — the backend has no notion of who else is interested.
 </Callout>
+
+**404** for an unknown id.
+
+---
+
+## `GET /media/{video_id}`
+
+The video itself, for a `<video>` tag. Open — no token required.
+
+- With blob storage configured: **`307`** to a signed read URL, valid for 3 hours. Azure serves
+  the bytes and handles `Range`, so seeking works and video never transits the backend.
+- Without it: the file, with `Range` support (`206` for partial requests).
+
+`307` rather than a permanent redirect, so a browser never caches an expired signed URL.
 
 **404** for an unknown id.
 

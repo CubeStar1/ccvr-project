@@ -24,7 +24,8 @@ keep working; where behaviour differs, the page says so.
 | `GET` | `/health` | Liveness, plus what this instance has loaded |
 | `GET` | `/schema` | Analyzers, exclusive groups and aggregates |
 | `GET` | `/analyzers` | Analyzers with descriptions, for an upload form |
-| `POST` | `/videos/url` | Ingest a video from an `http(s)` URL |
+| `POST` | `/uploads` | A one-time URL to upload a video file to |
+| `POST` | `/videos/url` | Ingest a video from an `http(s)` URL or an upload |
 | `GET` | `/jobs/{job_id}` | One job's progress and result |
 | `GET` | `/videos/{video_id}` | One video's metadata |
 | `DELETE` | `/videos/{video_id}` | Remove a video and everything produced for it |
@@ -35,17 +36,18 @@ keep working; where behaviour differs, the page says so.
 | `GET` | `/videos/{video_id}/entities` | People linked across the video |
 | `POST` | `/query` | Search for moments, optionally with a written answer |
 | `POST` | `/ask` | Answer a question from moments plus the summary and chapters |
+| `GET` | `/media/{video_id}` | Play the video (a redirect to a signed URL in production) |
 | `GET` | `/media/{video_id}/poster.jpg` | The video's poster frame |
 
 <Callout type="info">
-  Not carried over from `core/`: multipart upload (`POST /videos`), `GET /videos`, `GET /jobs`
-  and the `/media/{video_id}` redirect. Upload files to Storage first and pass the URL; keep your
-  own list of videos, as the frontend does in `video_core`.
+  Not carried over from `core/`: multipart upload (`POST /videos`), `GET /videos` and `GET /jobs`.
+  Upload with `POST /uploads` instead, and keep your own list of videos, as the frontend does in
+  `video_core`.
 </Callout>
 
 ## Conventions
 
-**Everything is a read except ingest, delete and the aggregate re-run.** `POST /query` and
+**Everything is a read except uploads, ingest, delete and the aggregate re-run.** `POST /query` and
 `POST /ask` are POSTs only because their bodies are too complex for a query string — they change
 nothing.
 
@@ -92,7 +94,7 @@ curl -X POST http://127.0.0.1:8077/ask \
   <Card title="Authentication" href="/docs/api/authentication" description="The shared-secret header, and what it is and is not." />
   <Card title="Errors" href="/docs/api/errors" description="Status codes, the error shape, and which failures land on the job instead of the request." />
   <Card title="Discovery" href="/docs/api/discovery" description="/health, /schema, /analyzers." />
-  <Card title="Ingestion" href="/docs/api/ingestion" description="Hand over a URL and start a job." />
+  <Card title="Ingestion" href="/docs/api/ingestion" description="Upload a file or hand over a URL, and start a job." />
   <Card title="Jobs" href="/docs/api/jobs" description="Polling background work." />
   <Card title="Videos" href="/docs/api/videos" description="Read, delete, and the poster image." />
   <Card title="Chunks" href="/docs/api/chunks" description="Reading stored chunk output." />

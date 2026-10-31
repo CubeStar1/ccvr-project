@@ -13,19 +13,16 @@ and how it should be analysed.
 
 ### Sources
 
-- **Files** — dropped or picked, accepting `video/*`. Each file is uploaded to the project's
-  Supabase Storage bucket (`project-assets`) first; the resulting public URL is what the backend
-  is handed.
-- **URLs** — any direct `http(s)` link to a video file. Nothing is copied to Storage on this path;
-  the backend downloads it itself. Links to pages, such as YouTube, are not supported.
+- **Files** — dropped or picked, accepting `video/*`. The browser asks `/api/uploads` for a
+  one-time upload URL issued by the backend, then sends the file straight there: Azure Blob
+  Storage in production, the backend itself in development. The backend is then handed
+  `upload:<upload_id>` to ingest.
+- **URLs** — any direct `http(s)` link to a video file. The backend downloads it itself. Links to
+  pages, such as YouTube, are not supported.
 
+Either way the backend keeps the one stored copy, and plays it back from `/media/<video_id>`.
 Several of each can be queued at once. Each source becomes its own job with its own progress row
 in the dialog.
-
-<Callout type="warn">
-  Supabase caps uploads at 50 MB by default. Raise the bucket limit, or add large videos by URL
-  instead — that path never pushes the bytes through the browser.
-</Callout>
 
 ### Analyzers
 
@@ -109,7 +106,7 @@ When the job finishes, the row gains `core_video_id`, `playback_url`, `poster_ur
 | Status | Meaning |
 |---|---|
 | `pending` | Row created, backend not yet called |
-| `uploading` | The browser is still pushing bytes to Storage |
+| `uploading` | The browser is still sending the file |
 | `queued` | The backend accepted the job; it may be waiting behind another video |
 | `analyzing` | The backend is working — `stage` says which part |
 | `ready` | Searchable |
@@ -117,9 +114,10 @@ When the job finishes, the row gains `core_video_id`, `playback_url`, `poster_ur
 
 ## Re-indexing
 
-Available from the card menu. There is no separate re-index call in the backend: the same source
-URL hashes to the same video id, so handing it over again re-runs the pipeline into the same
-video, with whatever analyzers and chunking are now asked for.
+Available from the card menu. There is no separate re-index call in the backend: the row's
+source is handed over again and re-runs the pipeline into the same video, with whatever analyzers
+and chunking are now asked for. For an uploaded file the backend reuses its stored copy; for a URL
+it downloads again.
 
 ## Deleting
 
@@ -127,5 +125,5 @@ Deleting a video removes its row. The backend is only told to delete its copy on
 else references it**: the same file uploaded to two projects is one video in the backend, and
 destroying it because this row went away would destroy the other project's analysis.
 
-When the backend does delete, it removes the video's folder (and with it the search index), the
-downloaded file, the poster and the ingest record in one call.
+When the backend does delete, it removes the video file, its folder (and with it the search
+index), the poster and the ingest record in one call — locally and in blob storage.

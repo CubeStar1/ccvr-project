@@ -11,12 +11,12 @@ import { Callout } from 'fumadocs-ui/components/callout'
 browser
   │
   ▼
-Next.js app ──► Supabase  (auth · Postgres · project-assets bucket)
+Next.js app ──► Supabase  (auth · Postgres)
   │
   │  HTTP, server-side only  (lib/core/client.ts, X-Core-Token)
   ▼
-backend/app.py ──► backend/engine.py ──► vidra (library) ──► backend/data/
-  (FastAPI)          (jobs, shapes)         │
+backend/app.py ──► backend/engine.py ──► vidra (library) ──► backend/data/ ◄──► Azure Blob Storage
+  (FastAPI)          (jobs, shapes)         │                   (cache)          (when configured)
                                             ├─ local: Whisper, pyannote, OpenCV, YOLO, CLIP, GLiNER, DistilBERT
                                             └─ OpenAI: vision model, embeddings, LLM
 ```
@@ -24,10 +24,10 @@ backend/app.py ──► backend/engine.py ──► vidra (library) ──► b
 | Component | Owns |
 |---|---|
 | **Next.js app** | Auth, projects, ownership, conversations, the agent loop, all UI |
-| **Supabase** | Users, the `projects` / `conversations` / `messages` / `video_core` tables with RLS, and uploaded video files |
-| **backend** | The HTTP API, background jobs, and translating VIDRA's output into the API's response shapes |
+| **Supabase** | Users, and the `projects` / `conversations` / `messages` / `video_core` tables with RLS |
+| **backend** | The HTTP API, uploads, playback, background jobs, and translating VIDRA's output into the API's response shapes |
 | **vidra** | Everything about understanding a video: transcription, chunking, frame sampling, description, embedding, search, aggregates |
-| **backend/data** | Every analysed video's folder, which is also its search index. No database server |
+| **backend/data** | Every video file, and its folder of analysis, which is also its search index. No database server. In production, mirrored to Azure Blob Storage and only a cache on the container's disk |
 
 <Callout type="info">
   The backend kept the routes and response shapes of the original `core/` service, so the
@@ -38,26 +38,31 @@ backend/app.py ──► backend/engine.py ──► vidra (library) ──► b
 ## Ingesting a video
 
 ```
-browser ──upload──► Supabase Storage (project-assets)
-   │                        │
-   └──POST /api/videos──────┘  (public URL)
+browser ──POST /api/uploads──► backend: POST /uploads ──► one-time signed URL
+   │
+   ├──PUT file──► Azure Blob Storage  uploads/<upload_id>/…   (the backend itself, in development)
+   │
+   └──POST /api/videos  { sourceUrl: "upload:<upload_id>" }   (or a pasted http(s) URL)
               │
               ├─► insert video_core row (status: pending)
               └─► POST /videos/url ──► backend: 202 + job_id
                                         │
                                         └─► worker thread (one video at a time):
-                                            download → vidra.workflow() → poster
+                                            take the upload, or download the URL
+                                            → vidra.workflow() → poster → publish to blob
                                                 │
-                                                ├─► data/sources/  the downloaded file
-                                                ├─► data/out/<id>/ transcript, chunks, descriptions,
+                                                ├─► sources/<id>   the video, stored once
+                                                ├─► out/<id>/      transcript, chunks, descriptions,
                                                 │                  embeddings, aggregates
-                                                └─► data/jobs/     job state, every stage
+                                                └─► jobs/          job state, every stage
 
 browser ──poll /api/videos──► reconcile row against GET /jobs/{id} ──► status: ready
+browser ──<video src=/media/<id>>──► backend ──307──► signed blob URL
 ```
 
 The row exists before the backend has seen a byte, because the video's id is the hash of its
-contents. Everything identifying arrives later, through the job.
+contents. Everything identifying arrives later, through the job. Video bytes never pass through
+Vercel or Supabase.
 
 ## Answering a question
 
@@ -111,12 +116,19 @@ CLI or an MCP server is a new caller, not a new implementation.
 ## Decisions worth knowing
 
 **The video is downloaded, not streamed.** Every stage re-opens the file and seeks per chunk —
-an access pattern priced for a local disk. The backend downloads the source URL once into
-`data/sources/` and every stage reads that copy.
+an access pattern priced for a local disk. The backend brings the source to `data/sources/` once
+and every stage reads that copy.
 
 **Files, not a database server.** VIDRA's `Folder` store keeps each video's index in its own
-folder. Nothing to run or migrate, and deleting a video is deleting a folder. VIDRA can also store
-to Supabase if this ever needs to move off one machine.
+folder. Nothing to run or migrate, and deleting a video is deleting a folder.
+
+**Blob storage as the system of record, local disk as a cache.** In production `blobs.py`
+mirrors the data folder to Azure Blob Storage, and a video's files are pulled back the first time
+it is read. The container can be restarted or replaced without losing anything.
+
+**Browsers talk to storage only through signed URLs.** An upload gets a write URL for one blob,
+valid 30 minutes; playback gets a read URL, valid 3 hours, behind a `307` from `/media/<id>`. The
+container stays private, and video bytes skip both Vercel and the backend's CPU.
 
 **One ingest at a time.** Every ingest loads Whisper, pyannote and the detectors onto the same
 GPU. A single worker keeps memory predictable; extra uploads wait in `queued`.
@@ -128,9 +140,12 @@ once and seeks, so several clips from one video cost one load between them.
 
 | Piece | Where |
 |---|---|
-| Next.js app | Vercel, or any Node host |
-| backend | A machine with enough memory for Whisper and pyannote — a GPU helps. Apple Silicon works |
-| Postgres + Storage + Auth | Supabase Cloud |
+| Next.js app | Vercel |
+| backend | Azure Container Apps, CPU, one replica — built by `.github/workflows/deploy-backend.yml` |
+| Video files and analysis | Azure Blob Storage |
+| Postgres + Auth | Supabase Cloud |
+
+Step by step in [Deployment](/docs/getting-started/deployment).
 
 <Callout type="warn">
   The backend's port must not be publicly routable. It has no users and no row-level security —

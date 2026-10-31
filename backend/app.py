@@ -12,15 +12,19 @@ import os
 from typing import Optional
 
 from fastapi import FastAPI, Form, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
+import blobs
 import engine
 
 app = FastAPI(title="FalconVQA backend", description="VIDRA behind core's API.")
 
 API_TOKEN = os.environ.get("CORE_API_TOKEN", "").strip()
-_OPEN = ("/health", "/docs", "/openapi.json", "/media/")
+# Browsers load /media/ directly, and PUT to /uploads/<id> with no token: an
+# upload id is unguessable, single-use and expires, which is the authority.
+_OPEN = ("/health", "/docs", "/openapi.json", "/media/", "/uploads/")
 _ROOT = "/"
 
 
@@ -31,6 +35,11 @@ async def require_token(request: Request, call_next):
         if request.headers.get("x-core-token") != API_TOKEN:
             return JSONResponse({"detail": "Invalid or missing X-Core-Token"}, status_code=401)
     return await call_next(request)
+
+
+# Added last, so it runs first: preflight requests carry no token.
+app.add_middleware(CORSMiddleware, allow_origins=blobs.ORIGINS,
+                   allow_methods=["GET", "HEAD", "PUT"], allow_headers=["*"])
 
 
 @app.get("/", include_in_schema=False)
@@ -46,10 +55,49 @@ def health():
 
 @app.get("/media/{video_id}/poster.jpg")
 def poster(video_id: str):
-    path = engine.POSTERS / f"{video_id}.jpg"
+    path = engine.poster_path(video_id)
     if not path.exists():
         raise HTTPException(404, f"No poster for {video_id!r}")
     return FileResponse(path, media_type="image/jpeg")
+
+
+@app.get("/media/{video_id}")
+def media(video_id: str):
+    found = engine.media(video_id)
+    if found is None:
+        raise HTTPException(404, f"No video {video_id!r}")
+    kind, where = found
+    if kind == "redirect":
+        # 307: not cached, so an expired signed URL is never replayed.
+        return RedirectResponse(where, status_code=307)
+    return FileResponse(where)
+
+
+# --------------------------------------------------------------------- uploads
+
+class UploadRequest(BaseModel):
+    filename: str
+    content_type: Optional[str] = None
+
+
+@app.post("/uploads")
+def create_upload(request: UploadRequest):
+    """A one-time URL to PUT a video file to; ingest it as `upload:<upload_id>`."""
+    return engine.create_upload(request.filename, request.content_type)
+
+
+@app.put("/uploads/{upload_id}", include_in_schema=False)
+async def receive_upload(upload_id: str, request: Request):
+    # Only used without blob storage; with it, browsers PUT to Azure directly.
+    target = engine.upload_target(upload_id)
+    if target is None:
+        raise HTTPException(404, f"No open upload {upload_id!r}")
+    size = 0
+    with target.open("wb") as out:
+        async for block in request.stream():
+            out.write(block)
+            size += len(block)
+    return {"upload_id": upload_id, "size_bytes": size}
 
 
 @app.get("/analyzers")
@@ -92,8 +140,9 @@ def ingest_url(request: IngestRequest):
         raise HTTPException(400, "transcript and diarization are mutually exclusive")
     if request.mode not in ("preset", "weights", "interval"):
         raise HTTPException(400, f"Unknown mode {request.mode!r}; expected preset|weights|interval")
-    if not request.url.startswith(("http://", "https://")):
-        raise HTTPException(400, "url must be an http(s) link to a video file")
+    if not request.url.startswith(("http://", "https://", "upload:")):
+        raise HTTPException(400, "url must be an http(s) link to a video file, "
+                                 "or upload:<upload_id> from POST /uploads")
     weights = {k: v for k in ("speaker", "silence", "cut", "semantic")
                if (v := getattr(request, k)) is not None}
     job = engine.create_job(source=request.url, analyzers=ids)

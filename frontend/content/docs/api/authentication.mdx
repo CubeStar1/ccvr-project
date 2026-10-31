@@ -27,7 +27,10 @@ These stay reachable without the token, so a deployment can be checked and explo
 | `/` | Redirects to `/docs` |
 | `/health` | Liveness must work for a load balancer |
 | `/docs`, `/openapi.json` | The API definition |
-| `/media/…` | Poster images, which a browser loads directly in an `<img>` tag |
+| `/media/…` | Video playback and posters, which a browser loads directly in `<video>` and `<img>` tags |
+| `/uploads/<id>` | A one-time upload target. The id is unguessable, single-use and expires after 30 minutes |
+
+Creating an upload (`POST /uploads`) still needs the token.
 
 Everything else returns `401`:
 
@@ -62,5 +65,6 @@ resolver every tool passes through, and the backend only ever called with explic
 - [ ] `CORE_API_TOKEN` set in the backend, and the same value in the client.
 - [ ] The backend's port not publicly routable — the application layer is the only client that
       needs it.
-- [ ] `BACKEND_PUBLIC_URL` set to the address browsers use, so posters load.
+- [ ] `BACKEND_PUBLIC_URL` set to the address browsers use, and `FRONTEND_ORIGINS` to the
+      frontend's, so uploads, playback and posters work.
 - [ ] The token held server-side only. A browser that can send it can read every video.

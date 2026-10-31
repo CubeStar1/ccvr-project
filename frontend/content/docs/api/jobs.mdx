@@ -39,13 +39,14 @@ Poll until `status` is `done` or `failed`.
 | Stage | What is happening |
 |---|---|
 | `queued` | Waiting for the worker — one job runs at a time |
-| `fetching` | Downloading and hashing the source, probing the file |
+| `fetching` | Taking the upload or downloading the URL, hashing it, probing the file |
 | `transcribing` | Whisper (and pyannote for `diarization`), then cutting the transcript onto chunks |
 | `chunking` | Finding scene or speech boundaries |
 | `sampling` | Choosing frames per chunk for each picture analyzer |
 | `analyzing` | The vision model describing each chunk |
 | `indexing` | Embedding descriptions and transcript |
 | `aggregating` | Video-level passes |
+| `publishing` | Copying the finished video to blob storage (a no-op without it) |
 | `complete` | Done |
 
 ### Ingest result
@@ -53,9 +54,9 @@ Poll until `status` is `done` or `failed`.
 ```json
 {
   "video_id": "dbf7af7300ab2484",
-  "video_url": "https://<project>.supabase.co/storage/v1/object/public/project-assets/…/clip.mp4",
+  "video_url": "http://127.0.0.1:8077/media/dbf7af7300ab2484",
   "poster_url": "http://127.0.0.1:8077/media/dbf7af7300ab2484/poster.jpg",
-  "storage_path": "/path/to/backend/data/sources/dbf7af7300ab2484.mp4",
+  "storage_path": "sources/dbf7af7300ab2484.mp4",
   "filename": "clip.mp4",
   "duration": 311.433,
   "size_bytes": 16135088,
@@ -72,7 +73,7 @@ Poll until `status` is `done` or `failed`.
 }
 ```
 
-`video_url` is the URL the video was ingested from — that's what plays in the browser.
+`video_url` is where the video plays from — this server's `GET /media/{video_id}`.
 
 <Callout type="info">
   `indexed` counts chunks with output per analyzer. A zero is normal, not an error — a silent
@@ -84,8 +85,8 @@ the video is searchable.
 
 ### Aggregate re-run result
 
-A job started by `POST /videos/{video_id}/aggregates` resolves to `{ video_id, ran, skipped }` —
-see [Aggregates](/docs/api/aggregates). The two kinds are distinguishable by the presence of
+A job started by `POST /videos/{video_id}/aggregates` resolves to
+`{ video_id, ran, aggregates, skipped }` — see [Aggregates](/docs/api/aggregates). The two kinds are distinguishable by the presence of
 `video_url`, which only an ingest result has.
 
 ---
@@ -96,8 +97,9 @@ Ingestion takes minutes — a five-minute video takes around five. A poll every 
 plenty.
 
 <Callout type="info">
-  Jobs are written to `data/jobs/` on every change, so a restart doesn't lose them. A job that was
-  still `queued` or `running` when the backend stopped is reported as `failed` with
+  Jobs are written to `data/jobs/` (and blob storage, when configured) on every change, so a
+  restart doesn't lose them. A job that was still `queued` or `running` when the backend stopped
+  is reported as `failed` with
   `"the server restarted while this job ran"`. Re-ingest to recover.
 </Callout>
 

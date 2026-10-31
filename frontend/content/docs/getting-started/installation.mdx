@@ -103,7 +103,8 @@ This is the join between the application's world and the backend's.
 | Column | Purpose |
 |---|---|
 | `project_id`, `user_id` | Ownership. RLS restricts every row to `auth.uid() = user_id` |
-| `title`, `source_type`, `storage_path`, `source_url` | Where the video came from |
+| `title`, `source_type`, `source_url` | Where the video came from: a URL, or `upload:<id>` for a file uploaded to the backend |
+| `storage_path` | Only set on rows from before uploads went to the backend: the file's path in `project-assets` |
 | `core_video_id` | The backend's identity — `sha256(bytes)[:16]`. Null until the backend has downloaded the file |
 | `playback_url`, `poster_url`, `duration`, `size_bytes` | Written back from the ingest job result |
 | `status`, `job_id`, `stage`, `progress`, `error` | Ingest lifecycle, reconciled on every poll |
@@ -179,6 +180,6 @@ Remove-Item -Recurse -Force backend/data
 </Tab>
 </Tabs>
 
-Application rows survive in Postgres, so after a reset those videos have nothing behind them.
-Re-index them, or delete the rows. The uploaded originals are still in the `project-assets`
-bucket, so re-indexing needs no new upload.
+Application rows survive in Postgres, so after a reset those videos have nothing behind them —
+not even the video file, which the backend stores. Delete those rows and upload again. Videos
+added by URL can be re-indexed, as long as the URL still works.

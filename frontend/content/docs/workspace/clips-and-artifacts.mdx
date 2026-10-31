@@ -38,8 +38,8 @@ new one, which is what makes "now add the ones from the second video" work.
 
 ## Where the URL comes from
 
-The tool layer maps the backend's `video_id` to the row's `playback_url` — the uploaded file in
-Supabase Storage, or the original URL — before the model ever sees a moment, so the model passes
+The tool layer maps the backend's `video_id` to the row's `playback_url` — the backend's
+`/media/<video_id>`, which redirects to the stored file — before the model ever sees a moment, so the model passes
 back a URL it was handed rather than constructing one. A video URL is never composed by the model,
 and never pasted into chat.
 

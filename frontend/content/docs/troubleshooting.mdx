@@ -113,10 +113,17 @@ The backend doesn't support structured filters. Drop `filters`, and narrow with 
 
 </Accordion>
 
-<Accordion title="Upload fails on a large file">
+<Accordion title="An upload fails before analysis starts">
 
-Supabase caps uploads at 50 MB by default. Raise the `project-assets` bucket's file size limit,
-or add the video by URL instead.
+The browser sends the file straight to the URL the backend issued. Check the browser's network
+tab for the `PUT`:
+
+- **Blocked by CORS** — the page's origin isn't in the backend's `FRONTEND_ORIGINS`. Add it
+  (comma-separated) and restart the backend; with blob storage, the backend re-applies the
+  storage account's CORS rules on startup.
+- **`403` from Azure** — the signed URL expired (30 minutes) or the machine's clock is far off.
+  Upload again.
+- **`404` from the backend** — the upload id was already used or has expired. Upload again.
 
 </Accordion>
 
@@ -137,11 +144,14 @@ The LLM aggregates (`summary`, `chapters`, `events` and the three entity ones) a
 
 </Accordion>
 
-<Accordion title="Poster images don't load">
+<Accordion title="Videos or posters don't load">
 
-Posters are served by the backend at `/media/<id>/poster.jpg`, using `BACKEND_PUBLIC_URL` to build
-the address. If the browser reaches the backend at anything other than
-`http://127.0.0.1:8077`, set `BACKEND_PUBLIC_URL` and re-index.
+Both are served from the backend at `/media/<id>` and `/media/<id>/poster.jpg`, and the addresses
+are built from `BACKEND_PUBLIC_URL` when the video is ingested. If the browser reaches the backend
+somewhere else, set `BACKEND_PUBLIC_URL` and re-index.
+
+With blob storage, `/media/<id>` redirects to a signed Azure URL; if that fails, check the
+storage account still exists and the connection string is current.
 
 </Accordion>
 
@@ -201,10 +211,9 @@ Remove-Item -Recurse -Force backend/data
 </Tabs>
 
 <Callout type="warn">
-  This deletes the analysis itself. Application rows survive in Postgres, so afterwards those
-  videos have nothing behind them — re-index them, or delete them. To free disk space without
-  losing analysis, delete `backend/data/sources/` instead; the downloaded copies are only
-  needed again for a re-index, which downloads them again.
+  Without blob storage this deletes every video file and its analysis — the only copies.
+  Application rows survive in Postgres with nothing behind them; delete them and upload again.
+  With blob storage configured, the local folder is only a cache, and deleting it loses nothing.
 </Callout>
 
 ## Environment notes

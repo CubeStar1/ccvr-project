@@ -10,13 +10,26 @@ TypeScript definitions for all of these live in `frontend/lib/core/types.ts` and
 directly. Some optional fields there (vector `fields`, `filters`, `reused`) belonged to the
 original `core/` service and are absent or empty from this backend.
 
+## Upload
+
+<TypeTable
+  type={{
+    upload_id: { type: 'string', description: '32 hex characters', required: true },
+    source: { type: 'string', description: '"upload:<upload_id>" — the url to ingest', required: true },
+    method: { type: "'PUT'", required: true },
+    upload_url: { type: 'string', description: 'Signed blob URL, or this server’s /uploads/<id>', required: true },
+    headers: { type: 'Record<string, string>', description: 'Send exactly these with the PUT', required: true },
+    expires_at: { type: 'string', description: 'ISO 8601; 30 minutes after creation', required: true },
+  }}
+/>
+
 ## Job
 
 <TypeTable
   type={{
     job_id: { type: 'string', description: '12-character hex id', required: true },
     status: { type: "'queued' | 'running' | 'done' | 'failed'", required: true },
-    stage: { type: 'string', description: 'queued, fetching, transcribing, chunking, sampling, analyzing, indexing, aggregating, complete' },
+    stage: { type: 'string', description: 'queued, fetching, transcribing, chunking, sampling, analyzing, indexing, aggregating, publishing, complete' },
     detail: { type: 'Record<string, unknown>', description: 'What the job was asked to do' },
     result: { type: 'IngestResult | AggregateResult | null', description: 'Populated once status is done' },
     error: { type: 'string | null', description: '"TypeName: message" when failed' },
@@ -30,9 +43,9 @@ original `core/` service and are absent or empty from this backend.
 <TypeTable
   type={{
     video_id: { type: 'string', description: 'sha256(bytes)[:16]', required: true },
-    video_url: { type: 'string', description: 'The URL it was ingested from; plays in the browser', required: true },
+    video_url: { type: 'string', description: 'Where it plays from: GET /media/{video_id}', required: true },
     poster_url: { type: 'string | null', description: 'Served by the backend; null if extraction failed' },
-    storage_path: { type: 'string', description: "The backend's downloaded copy" },
+    storage_path: { type: 'string', description: 'The stored file, e.g. "sources/<video_id>.mp4"' },
     filename: { type: 'string' },
     duration: { type: 'number', description: 'Seconds' },
     size_bytes: { type: 'number' },
@@ -50,6 +63,7 @@ original `core/` service and are absent or empty from this backend.
   type={{
     video_id: { type: 'string', required: true },
     ran: { type: 'string[]', required: true },
+    aggregates: { type: 'string[]', description: 'Everything now stored for the video', required: true },
     skipped: { type: 'Record<string, string>', description: 'Aggregate name → reason' },
   }}
 />

@@ -10,12 +10,13 @@ Ingestion is one background job that runs VIDRA's `workflow()` over the video. E
 reports itself on the job, so a client polling `GET /jobs/{job_id}` can show where a video is.
 
 ```
-fetching ─▶ transcribing ─▶ chunking ─▶ sampling ─▶ analyzing ─▶ indexing ─▶ aggregating ─▶ complete
+fetching ─▶ transcribing ─▶ chunking ─▶ sampling ─▶ analyzing ─▶ indexing ─▶ aggregating ─▶ publishing ─▶ complete
 ```
 
 ## 1. Fetching
 
-The backend downloads the source URL into `data/sources/`, hashing the bytes as they stream.
+The backend takes the uploaded file, or downloads the source URL, into `data/sources/`, hashing
+the bytes.
 The first 16 hex characters of the **SHA-256** become the **video id** — so the same file is
 always the same video, and two different files that share a name stay separate.
 
@@ -72,6 +73,12 @@ on which analyzers ran. See [Aggregators](/docs/concepts/aggregators).
 
 A poster frame (one second in) is saved last, for the video card.
 
+## 8. Publishing
+
+With blob storage configured, the finished video — file, folder, poster and metadata — is copied
+to Azure Blob Storage, and the local copy of the video file is dropped. Without it, this stage
+does nothing.
+
 ## What gets written
 
 Everything lands under `backend/data/`:
@@ -85,7 +92,11 @@ Everything lands under `backend/data/`:
 | `out/<id>/embedded.json`, `store/` | The embeddings and the search index |
 | `out/<id>/aggregates/*.json` | One file per video-level result |
 | `out/<id>/manifest.json` | What ran, with which models and settings |
-| `sources/`, `posters/`, `videos/`, `jobs/` | The downloaded file, its poster, the ingest request, job state |
+| `sources/`, `posters/`, `videos/`, `jobs/` | The video file, its poster, the ingest request, job state |
+| `uploads/` | Browser uploads waiting to be ingested, and a record per upload |
+
+In production all of it is mirrored to Azure Blob Storage — see
+[Deployment](/docs/getting-started/deployment).
 
 ## Re-running
 

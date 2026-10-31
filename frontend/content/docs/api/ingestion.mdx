@@ -1,22 +1,89 @@
 ---
 title: Ingestion
-description: POST /videos/url — starting an analysis job from a URL.
+description: POST /uploads and POST /videos/url — uploading a file or handing over a URL, and starting an analysis job.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout'
+import { Steps, Step } from 'fumadocs-ui/components/steps'
+
+A video reaches the backend one of two ways: **uploaded**, through a one-time upload URL, or
+**downloaded** from an `http(s)` URL. Either way the backend keeps the one stored copy, and every
+ingest starts with `POST /videos/url`.
+
+---
+
+## Uploading a file
+
+<Steps>
+
+<Step>
+
+### Ask for an upload URL — `POST /uploads`
+
+```bash
+curl -X POST http://127.0.0.1:8077/uploads \
+  -H "X-Core-Token: $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"filename": "clip.mp4", "content_type": "video/mp4"}'
+```
+
+```json
+{
+  "upload_id": "0fbf48df2a474577b5765d865c354b90",
+  "source": "upload:0fbf48df2a474577b5765d865c354b90",
+  "method": "PUT",
+  "upload_url": "https://<account>.blob.core.windows.net/falconvqa/uploads/0fbf…/clip.mp4?<signature>",
+  "headers": { "x-ms-blob-type": "BlockBlob", "Content-Type": "video/mp4" },
+  "expires_at": "2026-10-31T11:20:13.512409+00:00"
+}
+```
+
+With blob storage configured, `upload_url` is a signed Azure URL that can write that one blob for
+30 minutes. Without it, it is this server's `PUT /uploads/<upload_id>`.
+
+</Step>
+
+<Step>
+
+### Send the file
+
+PUT the raw bytes to `upload_url` with exactly the `headers` returned. No token — the URL is the
+authority, and it works once.
+
+```bash
+curl -X PUT "$UPLOAD_URL" -H "x-ms-blob-type: BlockBlob" -H "Content-Type: video/mp4" \
+  --data-binary @clip.mp4
+```
+
+A browser can do this directly with `fetch`, as the frontend does; the backend allows the
+origins in `FRONTEND_ORIGINS`.
+
+</Step>
+
+<Step>
+
+### Ingest it
+
+Pass `source` as the `url` of `POST /videos/url`, below. The ingest moves the file to
+`sources/<video_id>` and removes the temporary upload. Ingesting the same `upload:<id>` again
+later — a re-index — reuses the stored file.
+
+</Step>
+
+</Steps>
 
 ---
 
 ## `POST /videos/url`
 
-`application/json`. Download a video from a URL and analyse it. Returns **`202`** immediately,
-because ingestion takes minutes.
+`application/json`. Start analysing a video. Returns **`202`** immediately, because ingestion
+takes minutes.
 
 ### Body
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
-| `url` | string | *required* | A direct `http(s)` link to a video file |
+| `url` | string | *required* | A direct `http(s)` link to a video file, or `upload:<upload_id>` |
 | `analyzers` | string | `default_video` | Comma-separated ids. See [Analyzers](/docs/concepts/analyzers) |
 | `mode` | string | `preset` | `preset` \| `weights` \| `interval` |
 | `preset` | string | `audio_video` | `mode=preset` only: `audio` \| `video` \| `audio_video` |
@@ -31,7 +98,7 @@ curl -X POST http://127.0.0.1:8077/videos/url \
   -H "X-Core-Token: $TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{
-    "url": "https://example.com/clip.mp4",
+    "url": "upload:0fbf48df2a474577b5765d865c354b90",
     "analyzers": "default_video,diarization,ocr",
     "mode": "preset",
     "preset": "audio_video"
@@ -39,19 +106,18 @@ curl -X POST http://127.0.0.1:8077/videos/url \
 ```
 
 ```json
-{ "job_id": "d9b16a609ab1", "status": "queued", "source": "https://example.com/clip.mp4" }
+{ "job_id": "d9b16a609ab1", "status": "queued", "source": "upload:0fbf48df2a474577b5765d865c354b90" }
 ```
 
 <Callout type="info">
-  `video_id` is the hash of the bytes, so it does not exist until the download finishes. It
-  arrives in the job result along with `video_url`. Design your rows for that: create them before
-  the id exists, and fill it in from the job.
+  `video_id` is the hash of the bytes, so it does not exist until the file has been read. It
+  arrives in the job result along with `video_url`, the address it plays from. Design your rows
+  for that: create them before the id exists, and fill it in from the job.
 </Callout>
 
 <Callout type="warn">
-  The URL must serve the video file itself. A page that embeds a video — YouTube, Vimeo, a share
-  page — downloads as HTML and the job fails. Uploading a file means putting it in storage first
-  (the frontend uses Supabase Storage) and passing that URL.
+  An `http(s)` URL must serve the video file itself. A page that embeds a video — YouTube, Vimeo, a
+  share page — downloads as HTML and the job fails.
 </Callout>
 
 ---
@@ -76,9 +142,10 @@ a speech analyzer becomes `scene`, and so on — and a file with no soundtrack f
 
 ## Re-ingesting
 
-There is no separate re-index endpoint. The same bytes hash to the same `video_id`, so posting
-the same URL again re-runs the pipeline into that video's folder, with the analyzers and chunking
-now asked for.
+There is no separate re-index endpoint. Post the same `url` again: an `upload:<id>` reuses the
+stored file, and an `http(s)` URL is downloaded again. The same bytes hash to the same
+`video_id`, so the pipeline re-runs into that video, with the analyzers and chunking now asked
+for.
 
 Jobs run **one at a time**. A second request is accepted straight away and its job stays `queued`
 until the first finishes.
@@ -89,8 +156,9 @@ until the first finishes.
 
 | Code | Cause |
 |---|---|
-| `400` | Unknown or missing analyzers; `transcript` + `diarization` together; unknown `mode`; a non-`http(s)` URL |
+| `400` | Unknown or missing analyzers; `transcript` + `diarization` together; unknown `mode`; a `url` that is neither `http(s)` nor `upload:` |
 | `401` | Missing or wrong token |
+| `404` | `PUT /uploads/<id>` with an unknown, expired or already-used id |
 
-A URL that 404s or isn't a decodable video fails the **job**, not the request — the download
-starts after the `202`. See [Errors](/docs/api/errors).
+A URL that 404s, an upload that was never sent, or a file that isn't a decodable video fails the
+**job**, not the request. See [Errors](/docs/api/errors).
