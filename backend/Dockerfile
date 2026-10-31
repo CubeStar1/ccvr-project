@@ -46,6 +46,14 @@ RUN cd backend \
     && uv pip install --no-deps -r requirements.txt \
     && rm all.txt requirements.txt
 
+# YOLO-World (the object_detection analyzer) imports `clip`, Ultralytics' fork of
+# OpenAI CLIP. It is not on PyPI, and Ultralytics' fallback of pip-installing it
+# from git on first use fails here: no git, and the app user cannot install.
+# torch/torchvision are already installed, so only ftfy comes along with it.
+RUN uv pip install \
+        "clip @ https://github.com/ultralytics/CLIP/archive/7ffa84b3bfa40c42ecc1c77147a855e69cb2dd40.tar.gz" \
+    && python -c "import clip"
+
 # Ungated model weights, baked in so a restarted container starts warm.
 COPY backend/prefetch.py backend/
 RUN python backend/prefetch.py
