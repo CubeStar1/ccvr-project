@@ -38,9 +38,10 @@ new one, which is what makes "now add the ones from the second video" work.
 
 ## Where the URL comes from
 
-The tool layer maps core's `video_id` to the row's `playback_url` before the model ever sees a
-moment, so the model passes back a URL it was handed rather than constructing one. A raw core
-`video_url` is never composed by the model, and never pasted into chat.
+The tool layer maps the backend's `video_id` to the row's `playback_url` — the backend's
+`/media/<video_id>`, which redirects to the stored file — before the model ever sees a moment, so the model passes
+back a URL it was handed rather than constructing one. A video URL is never composed by the model,
+and never pasted into chat.
 
 ## The document artifact
 
@@ -62,12 +63,12 @@ duration, and three lanes you can jump into.
 | **Chapters** | Titled spans from the `chapters` aggregate, with events overlaid |
 
 Everything the studio needs arrives in one round trip from `GET /api/videos/{id}/timeline`, which
-flattens core's output into those lanes. Sources settle independently — a video analysed without
+flattens the backend's output into those lanes. Sources settle independently — a video analysed without
 `chapters` still renders its scenes and transcript, and the failures are reported rather than
 blanking the panel.
 
 <Callout type="info">
   The timeline route is deliberately not the same call as the video detail page. That one keeps
-  core's shapes exactly as returned, because the detail page exists to show what was stored; this
+  the backend's shapes exactly as returned, because the detail page exists to show what was stored; this
   one flattens into display lanes and drops whatever does not fit.
 </Callout>

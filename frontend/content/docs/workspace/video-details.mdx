@@ -1,6 +1,6 @@
 ---
 title: The video detail page
-description: Everything stored about one video — overview, chunks, speech, entities, and the raw record.
+description: Everything stored about one video — overview, chunks, speech, entities, and the raw output.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout'
@@ -8,10 +8,10 @@ import { Callout } from 'fumadocs-ui/components/callout'
 `/projects/{projectId}/videos/{videoId}` is the explorer for a single video. Where the chat
 answers questions, this page shows what the answers are made of.
 
-It loads from `GET /api/videos/{id}/details`, which returns the row, core's own metadata, every
-chunk with every analyzer's output attached, and every stored aggregate. Chunks are paged out of
-core 500 at a time and walked until core's `total` is satisfied — core paginates because an agent
-reading chunks wants a few; this page is the opposite case.
+It loads from `GET /api/videos/{id}/details`, which returns the row, the backend's own metadata,
+every chunk with every analyzer's output attached, and every stored aggregate. Chunks are paged
+out of the backend 500 at a time and walked until its `total` is satisfied — the API paginates
+because an agent reading chunks wants a few; this page is the opposite case.
 
 <Callout type="info">
   Sources settle independently. A video analysed without `people` has no `entities` aggregate; a
@@ -24,9 +24,9 @@ reading chunks wants a few; this page is the opposite case.
 ### Overview
 
 The video-level picture: player, poster, duration, chunk count, the analyzers that ran, and the
-aggregates that exist. This is where `summary`, `chapters`, `events`, `stats` and `novelty` are
-rendered — tiered summaries with the finest tier first, chapters as titled spans, events as a
-timestamped list, stats as counts and extremes.
+aggregates that exist. This is where `summary`, `chapters`, `events` and `stats` are rendered —
+the summary with its topics, chapters as titled spans, events as a timestamped list, stats as
+counts.
 
 ### Chunks
 
@@ -42,27 +42,27 @@ aggregates ran.
 
 ### Entities
 
-People linked across the whole video: each one's description, the narrative of what they did,
-first and last seen, appearance count, and dwell time from `entity_timelines`. `cooccurrence`
-shows which people appeared together.
+People linked across the whole video: each one's description, the account of what they did,
+first and last seen, and appearance count.
 
-Only present when the video was analysed with `people`.
+Only present when the video was analysed with `people`. Some panels were built for aggregates the
+original backend had (`novelty`, `entity_timelines`, `cooccurrence`); those sections stay empty.
 
 ### Raw
 
-The stored record as returned, for when you need to see exactly what an analyzer produced rather
-than a rendering of it.
+The stored output as returned, for when you need to see exactly what was produced rather than a
+rendering of it.
 
 ## Re-running aggregates
 
 The page can re-run video-level passes without re-analysing anything, through
-`POST /api/videos/{id}/aggregates`. Aggregators read stored analyzer output rather than the video,
+`POST /api/videos/{id}/aggregates`. Aggregates read stored chunk output rather than the video,
 so this is the cheap half of re-processing.
 
 <Callout type="warn">
-  Five aggregators bill LLM calls — `summary`, `chapters`, `events`, `entities` and
-  `object_entities`. That is why re-running is a deliberate action rather than something the page
-  does on load.
+  Six aggregates bill LLM calls — `summary`, `chapters`, `events`, `entities`, `object_entities`
+  and `text_entities`. That is why re-running is a deliberate action rather than something the
+  page does on load.
 </Callout>
 
 ## Deleting and re-indexing

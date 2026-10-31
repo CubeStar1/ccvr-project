@@ -1,0 +1,22 @@
+# The backend image is built from the repository root (it needs vidra/), so
+# everything else here stays out of the build context.
+frontend/
+datasets/
+ccvr/
+.git/
+.github/
+
+# Runtime state and local environments
+backend/data/
+**/.venv/
+**/__pycache__/
+**/*.py[cod]
+*.log
+.DS_Store
+
+# Secrets are supplied as environment variables at runtime, never baked in.
+**/.env
+**/.env.*
+
+# Weights are fetched in the Dockerfile; never ship a dev-machine copy.
+**/*.pt

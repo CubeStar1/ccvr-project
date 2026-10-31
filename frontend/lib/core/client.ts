@@ -7,6 +7,7 @@ import type {
   ChunksResponse,
   CoreIngestResult,
   CoreJob,
+  CoreUpload,
   CoreVideo,
   EntitiesResponse,
   QueryResponse,
@@ -102,6 +103,14 @@ export const core = {
       url,
       ...ingestBody(config),
     }),
+
+  /**
+   * A one-time URL the browser PUTs a video file to (Azure Blob Storage when the
+   * backend has it, else the backend itself). The file is then ingested by
+   * passing the returned `source` to `ingestUrl`.
+   */
+  createUpload: (filename: string, contentType?: string) =>
+    post<CoreUpload>('/uploads', { filename, content_type: contentType || null }),
 
   job: (jobId: string) => request<CoreJob>(`/jobs/${jobId}`),
 

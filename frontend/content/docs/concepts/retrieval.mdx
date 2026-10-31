@@ -1,135 +1,88 @@
 ---
 title: Retrieval
-description: Named vectors, typed filters, detail levels, and the difference between searching for moments and asking a question.
+description: Hybrid search over chunks, detail levels, and the difference between searching for moments and asking a question.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout'
 
-## One point, several vectors
+## What is searched
 
-Each chunk is stored as **one Qdrant point carrying several named vectors**, one per part of its
-output. A query names which vector to compare against.
+Every chunk contributes several pieces of text to the index: one description per picture
+analyzer that ran on it, and its transcript. Each piece is stored with an embedding from
+**OpenAI `text-embedding-3-small`** (1536 dimensions).
 
-| Field | Embeds |
-|---|---|
-| `combined` | The whole flattened record — description, setting, people, actions, objects, tags |
-| `description` | The prose summary only |
-| `people` | The person descriptions only |
-| `actions` | Actions, and what objects are used for |
-| `objects` | Object names only |
+## How a search ranks chunks
 
-`combined` is the default and covers everything. The others match one part, so a short precise
-match is not diluted by surrounding prose — a person query compared against a two-line person
-description scores far more cleanly than the same query against a full record.
+A query is ranked two ways at once:
+
+1. **Dense** — the query is embedded with the same model and compared against every piece by
+   similarity of meaning.
+2. **Lexical** — the query's words are matched against the same pieces as keywords.
+
+The two rankings are fused with **reciprocal rank fusion**, then rolled up **per chunk**: a chunk's
+score is `1/(k + best rank) + 0.5/(k + second-best rank)` with `k = 10`. A chunk whose
+description *and* transcript both match ranks above one where only a single piece does.
+
+So a quoted phrase finds the exact words, and a paraphrase still finds the right moment.
 
 <Callout type="info">
-  A chunk missing the requested field is **excluded**, not matched on empty text. A video with no
-  people cannot surface in a `field=people` search at all.
+  Scores are fused rank scores, not cosine similarities — they are small numbers (around 0.1 for
+  a strong match) and only meaningful for ordering hits within one search. Don't threshold on
+  them.
 </Callout>
 
-Embeddings come from `BAAI/bge-small-en-v1.5` with BGE's query prefix applied at search time,
-running locally.
+## Narrowing a search
 
-## Filters
-
-`filters` is a flat dict validated against one spec, so a filter added to the store is reachable
-through the API immediately.
-
-| Filter | Type | Matches | Payload field |
-|---|---|---|---|
-| `video_ids` | `list[str]` | any | `video_id` |
-| `chunk_ids` | `list[int]` | any | `chunk_id` |
-| `analyzer_ids` | `list[str]` | any | `extractor_id` |
-| `chunk_config` | `str` | exact | `chunk_config` |
-| `objects` | `list[str]` | any | `objects` |
-| `tags` | `list[str]` | any | `tags` |
-| `speakers` | `list[str]` | any | `speakers` |
-| `people` | `list[str]` | any | `people` |
-| `min_people` | `int` | ≥ | `people_count` |
-| `max_people` | `int` | ≤ | `people_count` |
-| `after` | `float` | ≥ | `start` |
-| `before` | `float` | ≤ | `end` |
+| Parameter | Effect |
+|---|---|
+| `video_ids` | Only these videos. Omitted, every video in the backend is searched |
+| `analyzer` | `default_video` (the default) searches everything. `ocr`, `people` or `object_detection` searches only that analyzer's descriptions |
+| `limit` | How many chunks come back, 1–50 |
 
 <Callout type="warn">
-  Unknown keys are a `400` with a suggestion (`Unknown filter 'speaker'; did you mean
-  'speakers'?`) rather than being ignored. A silently dropped filter returns plausible but wrong
-  results, which is worse than an error.
+  The original core API also had `field`, `filters` and `score_threshold`. The backend accepts
+  `field` and `score_threshold` but ignores them, and rejects a non-empty `filters` with a `400`.
+  Narrow with `video_ids` and `analyzer`, and put everything else in the query text.
 </Callout>
-
-Every filter is a hard `AND` against exact stored labels, so it can only ever *remove* results.
-This is why the agent's `search_moments` tool deliberately does not expose them — see
-[The agent](/docs/workspace/agent-chat).
-
-Call `GET /schema` for the live list rather than hardcoding this table.
 
 ## Detail levels
 
 The same result serves a browser and an agent, and they want opposite things. A page renders
-every nested record cheaply; an agent pays for each one in context.
+every field cheaply; an agent pays for each one in context.
 
-| Level | Contents | Measured cost |
-|---|---|---|
-| `minimal` | ids, timecodes, score, 180-char snippet | ~440 tokens for 5 hits |
-| `standard` | plus description, people, objects, actions, tags, speakers, turns | The UI's level |
-| `full` | plus `text`, `persons`, `detections`, `texts` | ~19k tokens for 5 hits |
+| Level | Contents |
+|---|---|
+| `minimal` | ids, timecodes, score, and a 240-character `snippet` |
+| `standard` | plus `video_url`, `description`, `people`, `objects`, `actions`, `tags`, `speakers`, `turns`, `people_count` |
+| `full` | plus the transcript `text`, `persons`, `detections` and on-screen `texts` |
 
 The agent pattern is `detail=minimal` to decide, then
-`GET /videos/{id}/chunks?chunk_ids=…` to read the few that matter — roughly 1.6k tokens instead
-of 19k for the same work.
-
-## Score thresholds
-
-Cosine similarity always ranks *something*. Without a threshold, a query for content that is not
-in the video returns weak neighbours rather than nothing.
-
-Measured on sample footage: present content scored ≥ 0.665, absent content ≤ 0.524, so roughly
-0.55–0.60 separates them. Retune per field and per embedding model — appearance queries
-(`field=people`) score lower than topic queries, around 0.51–0.54.
-
-<Callout type="warn">
-  A threshold is the one parameter that can empty a good result set. Set it only when the question
-  is whether something is **absent** and an empty result has to mean "not present".
-</Callout>
+`GET /videos/{id}/chunks?chunk_ids=…` to read the few that matter.
 
 ## Search versus ask
 
-Two endpoints, two different jobs.
+### `POST /query` — find moments
 
-### `POST /query` — find segments
-
-Vector search, optionally with a synthesised answer over the hits it found. Everything it knows
-comes from the retrieved chunks.
+Search, optionally with a written answer over the hits. Everything it knows comes from the
+retrieved chunks.
 
 Use it for "find the part where…", "when does…", "show me…".
 
 ### `POST /ask` — answer a question
 
-The question is **routed** to whichever video-level aggregates can address it, by embedding it
-against a description of what each one answers.
-
-```
-"what did the woman in the light gray shirt do"  ->  entities
-"which segments are unusual"                     ->  novelty
-"how busy was the store"                         ->  stats
-"what brands are visible"                        ->  ner
-"who was with the man in yellow shorts"          ->  cooccurrence, entities
-```
-
-Selection is **relative** — how far a match stands above the average for that question — because
-absolute thresholds do not survive real phrasing. The measured score mean shifted from 0.47 to
-0.56 across questions, so any fixed cutoff either admitted everything or nothing.
-
-Context is then assembled from the routed aggregates, the video summary, the summary sections
-nearest the question, and the retrieved segments. `sources` reports what was consulted.
+Retrieves the moments most relevant to the question, **and** reads each video's `summary` and
+`chapters` aggregates, then has the LLM answer from both. The overview is what lets it answer
+whole-video questions that no single moment covers. `sources` reports which aggregates were read
+for which video.
 
 Use it for "what / why / how / summarise / explain" — anything where the answer is a conclusion
 rather than a location.
 
 ## Citations
 
-Both endpoints cite `[video_id start-end]` using the exact timecodes given, and neither
-fabricates an answer from an empty result set — `answer` is `null` when nothing matched or when
-`synthesize` is false.
+Both endpoints write answers from the evidence only, cite moments as `m:ss` timestamps, and say
+plainly when the evidence doesn't answer the question. `/query`'s `answer` is `null` when nothing
+matched or when `synthesize` is false.
 
-Search payloads are self-sufficient: everything needed to cite and play a moment is on the hit,
-with no lookup into records.
+Search hits are self-sufficient: everything needed to cite and play a moment — `video_id`,
+`start`, `end`, `video_url` — is on the hit.

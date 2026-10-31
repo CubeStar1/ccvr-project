@@ -1,62 +1,74 @@
 ---
 title: Configuration
-description: Every environment variable for core and the frontend, what it does, and what it defaults to.
+description: Every environment variable for the backend and the frontend, what it does, and what it defaults to.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout'
 
-## core
+## Backend
+
+Read from `backend/.env` (and the process environment).
 
 ### Required
 
 | Variable | Purpose |
 |---|---|
-| `OPENAI_API_KEY` | Vision-language calls, answer synthesis, and the five LLM-backed aggregators |
-| `SUPABASE_URL` | Storage. Ingest cannot run without it |
-| `SUPABASE_SERVICE_ROLE_KEY` | Storage. Ingest cannot run without it |
+| `OPENAI_API_KEY` | Frame descriptions, embeddings, `/query` and `/ask` answers, and the written aggregates |
+| `HF_TOKEN` | Speaker diarization; its pyannote models are gated. Only needed if you use `diarization` |
 
 ### Optional
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `HF_TOKEN` | – | Required only for the `diarization` analyzer; its pyannote model is gated |
-| `VIDEOMIND_API_TOKEN` | – | Shared secret required on every non-public route. **Set this for any deployment reachable from off-box** |
-| `VIDEOMIND_BUCKET` | `videos` | Storage bucket name |
-| `VIDEOMIND_MAX_BYTES` | 4 GiB | Cap on a server-side fetch of a caller-supplied URL |
-| `VIDEOMIND_UI` | `1` | `0` disables the built-in web UI, same as `serve.py --api-only` |
+| `CORE_API_TOKEN` | – | Shared secret required on every non-public route. **Set this for any deployment reachable from off-box** |
+| `VIDRA_TIER` | `llm` | The costliest aggregates an ingest runs: `free`, `local` or `llm`. See [Aggregators](/docs/concepts/aggregators) |
+| `BACKEND_DATA` | `backend/data` | Where everything is written. Wiping it is a full reset |
+| `BACKEND_PUBLIC_URL` | `http://127.0.0.1:8077` | How a browser reaches the backend. Playback, poster and upload URLs are built from it, and playback URLs are stored on the frontend's rows — set it once, and keep it |
+| `FRONTEND_ORIGINS` | `http://localhost:3000` | Comma-separated origins allowed to upload and play videos from the browser (CORS) |
+| `AZURE_STORAGE_CONNECTION_STRING` | – | Mirror the data folder to Azure Blob Storage. Unset, everything stays on local disk. See [Deployment](/docs/getting-started/deployment) |
+| `AZURE_STORAGE_CONTAINER` | `falconvqa` | The blob container, created on first use |
 
-### Paths
+### What's in the data folder
 
-Every path is overridable, which is what makes it possible to point a second instance at its own
-data directory.
-
-| Variable | Default | Holds |
-|---|---|---|
-| `VIDEOMIND_ROOT` | the repo root | Base for the defaults below |
-| `VIDEOMIND_DATA` | `data/` | Everything the app writes. Wiping it is a full reset |
-| `VIDEOMIND_RECORDS` | `data/records` | One JSON record per video: chunks, analyzer output, aggregates |
-| `VIDEOMIND_VECTORDB` | `data/vectordb` | Qdrant's embedded storage |
-| `VIDEOMIND_UPLOADS` | `data/uploads` | Files posted as multipart, kept after upload |
-| `VIDEOMIND_CACHE` | `data/cache` | Videos pulled back from Storage to be decoded, keyed by content hash |
-| `VIDEOMIND_MEDIA` | `media/` | Read-only test assets, deliberately outside `data/` |
-| `VIDEOMIND_MODELS` | `data/models` | Downloaded weights (YOLO) |
+| Path | Holds |
+|---|---|
+| `sources/<video_id>.<ext>` | The video itself — the only copy. `/media/<video_id>` plays it |
+| `out/<video_id>/` | VIDRA's output: media info, timeline, transcript, descriptions, embeddings, aggregates. Also the search index |
+| `videos/<video_id>.json` | What was asked for at ingest, and where the video came from |
+| `posters/<video_id>.jpg` | One frame for the video card |
+| `jobs/<job_id>.json` | Job state |
+| `uploads/` | A browser upload until its ingest takes it, and a record per upload so a re-index finds the video again |
 
 <Callout type="info">
-  `data/cache` is regenerable — deleting it costs a re-download, never data. `data/records` and
-  `data/vectordb` are not: together they are the analysis. Back those two up if anything.
+  With `AZURE_STORAGE_CONNECTION_STRING` set, every one of these is mirrored to the blob container
+  under the same path, and the local folder is only a cache: a video's files come back the first
+  time something asks for it. Without it, back up `backend/data/` — it is the only copy.
 </Callout>
 
-## frontend
+### Changing models
+
+Every model role is set in one line of `backend/engine.py`:
+
+```python title="backend/engine.py"
+MODELS = Models()                    # OpenAI for every role; the key comes from .env
+```
+
+The roles are `vlm` (frame descriptions), `llm` (aggregates and answers), `embedder` and
+`visual_embedder`. VIDRA can also use Anthropic, local models, or any OpenAI-compatible server for
+these — see `vidra/README.md`. Changing the embedder means re-ingesting, since stored vectors
+must come from the same model as the query.
+
+## Frontend
 
 ```bash title="frontend/.env.local"
-# Supabase — rows, auth, and the project-assets bucket
+# Supabase — rows and auth (video files live with the backend)
 NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
 NEXT_PUBLIC_SUPABASE_ADMIN=""            # service-role key
 
-# The analysis backend
+# The analysis backend (backend/, built on vidra/)
 CORE_API_URL="http://127.0.0.1:8077"
-CORE_API_TOKEN=""                        # must match VIDEOMIND_API_TOKEN in core/.env
+CORE_API_TOKEN=""                        # must match CORE_API_TOKEN in backend/.env
 
 # Model providers — whichever you want in the model picker
 OPENAI_API_KEY=""
@@ -75,13 +87,14 @@ NEXT_PUBLIC_APP_ICON='/next.svg'
 ```
 
 `CORE_API_URL` and `CORE_API_TOKEN` are read server-side only, in `lib/core/client.ts`. That
-client is never imported into a client component: core has no per-user auth, so every call is
-made by a route that has already checked ownership and resolved which video ids the caller may
-touch.
+client is never imported into a client component: the backend has no per-user auth, so every
+call is made by a route that has already checked ownership and resolved which video ids the
+caller may touch.
 
 ### Available models
 
-The model picker is defined in `app/agent/lib/ai/models.ts`. Out of the box:
+The chat model picker is defined in `app/agent/lib/ai/models.ts`. It is independent of the
+backend's models — the picker chooses who runs the agent loop, not who describes frames.
 
 | Provider | Models |
 |---|---|
@@ -95,19 +108,26 @@ A provider whose key is unset simply fails when selected; nothing else breaks.
 ## Security posture
 
 <Callout type="warn">
-  **Core has no users, no projects, and no row-level security.** Whoever can reach the port can
-  read every video in it. `VIDEOMIND_API_TOKEN` is a boundary, not an authorisation model — it
-  stops the port from being one. All per-user scoping happens in the frontend: RLS on
+  **The backend has no users, no projects, and no row-level security.** Whoever can reach the
+  port can read every video in it. `CORE_API_TOKEN` is a boundary, not an authorisation model —
+  it stops the port from being one. All per-user scoping happens in the frontend: RLS on
   `video_core`, plus every agent tool resolving the ids it is allowed to touch through a single
-  choke point before calling core.
+  choke point before calling the backend.
 </Callout>
 
 For a deployment:
 
-1. Set `VIDEOMIND_API_TOKEN` in core and the matching `CORE_API_TOKEN` in the frontend.
-2. Do not expose core's port publicly. The frontend is the only client that needs it.
-3. Run with `--api-only` if the built-in UI is not wanted — it has no way to send the token
-   header, which is why `/` stays open when the UI is enabled.
+1. Set the same `CORE_API_TOKEN` in `backend/.env` and `frontend/.env.local`.
+2. Do not expose the backend's port publicly. The frontend is the only client that needs it.
+3. Set `BACKEND_PUBLIC_URL` to the address browsers use, and `FRONTEND_ORIGINS` to the frontend's.
 
-`/health`, `/docs`, `/redoc` and `/openapi.json` stay open regardless, so a deployment can be
-checked without the secret.
+`/`, `/health`, `/docs`, `/openapi.json`, `/media/…` (video playback and posters) and
+`/uploads/<id>` (a one-time upload target) stay open regardless. Browsers load media directly, so
+they can't send the token; an upload id is unguessable, single-use and expires after 30 minutes.
+
+The full production setup is in [Deployment](/docs/getting-started/deployment).
+
+<Callout type="warn">
+  Keep `.env` and `.env.local` out of git — the root `.gitignore` already excludes them. If a key
+  is ever pasted somewhere public, rotate it in the provider's dashboard.
+</Callout>
