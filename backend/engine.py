@@ -51,7 +51,9 @@ from vidra import workflow as vidra_workflow
 import blobs
 
 ROOT = Path(__file__).resolve().parent
-vidra.configure(env_file=ROOT / ".env")
+# A deployment passes secrets as environment variables and ships no .env.
+if (ROOT / ".env").exists():
+    vidra.configure(env_file=ROOT / ".env")
 
 DATA = Path(os.environ.get("BACKEND_DATA", ROOT / "data"))
 OUT, SOURCES, META, JOBS, POSTERS, UPLOADS = (
