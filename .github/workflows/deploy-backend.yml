@@ -11,9 +11,9 @@ on:
   workflow_dispatch:
 
 env:
-  IMAGE_NAME: thecubestar/falconvqa-core
-  AZURE_CONTAINER_APP: falconvqa-core
-  AZURE_RESOURCE_GROUP: falconvqa-rg
+  IMAGE_NAME: thecubestar/video-rag-backend
+  AZURE_CONTAINER_APP: video-rag-backend
+  AZURE_RESOURCE_GROUP: video-rag-rg
 
 jobs:
   build-and-deploy:

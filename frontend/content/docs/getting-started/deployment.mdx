@@ -37,10 +37,10 @@ One storage account for the backend alone — the backend sets its CORS rules on
 any others.
 
 ```bash
-az storage account create -n falconvqastore -g falconvqa-rg -l <region> \
+az storage account create -n videoragstore -g video-rag-rg -l <region> \
   --sku Standard_LRS --kind StorageV2 --allow-blob-public-access false
 
-az storage account show-connection-string -n falconvqastore -g falconvqa-rg -o tsv
+az storage account show-connection-string -n videoragstore -g video-rag-rg -o tsv
 ```
 
 Keep the connection string for the next step. The container (`falconvqa` by default) is created
@@ -52,15 +52,15 @@ on first use and stays private.
 
 ### Configure the Container App
 
-The workflow updates the existing `falconvqa-core` app in `falconvqa-rg`. Give it the secrets and
+The workflow updates the existing `video-rag-backend` app in `video-rag-rg`. Give it the secrets and
 settings once:
 
 ```bash
-az containerapp secret set -n falconvqa-core -g falconvqa-rg --secrets \
+az containerapp secret set -n video-rag-backend -g video-rag-rg --secrets \
   openai-key=<OPENAI_API_KEY> hf-token=<HF_TOKEN> core-token=<long random string> \
   blob-conn="<connection string>"
 
-az containerapp update -n falconvqa-core -g falconvqa-rg \
+az containerapp update -n video-rag-backend -g video-rag-rg \
   --cpu 4 --memory 8Gi --min-replicas 1 --max-replicas 1 \
   --set-env-vars \
     OPENAI_API_KEY=secretref:openai-key \
@@ -70,7 +70,7 @@ az containerapp update -n falconvqa-core -g falconvqa-rg \
     BACKEND_PUBLIC_URL=https://<app>.<region>.azurecontainerapps.io \
     FRONTEND_ORIGINS=https://<your-app>.vercel.app
 
-az containerapp ingress enable -n falconvqa-core -g falconvqa-rg \
+az containerapp ingress enable -n video-rag-backend -g video-rag-rg \
   --type external --target-port 8077
 ```
 
@@ -92,13 +92,13 @@ stores on its rows. Set it to the app's final address before the first upload, a
 ### Check the GitHub secrets
 
 `.github/workflows/deploy-backend.yml` builds `backend/Dockerfile`, pushes
-`thecubestar/falconvqa-core` to Docker Hub and points the app at the new image. It needs the
+`thecubestar/video-rag-backend` to Docker Hub and points the app at the new image. It needs the
 same repository secrets the old `core/` workflow used:
 
 | Secret | For |
 |---|---|
 | `DOCKER_USERNAME`, `DOCKER_PASSWORD` | Pushing to Docker Hub |
-| `AZURE_CREDENTIALS` | `az login` as a service principal with access to `falconvqa-rg` |
+| `AZURE_CREDENTIALS` | `az login` as a service principal with access to `video-rag-rg` |
 
 It runs on every push to `main` that touches `backend/`, `vidra/` or the workflow, and can be run
 by hand from the Actions tab.
