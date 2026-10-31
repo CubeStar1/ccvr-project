@@ -1,116 +1,117 @@
 ---
 title: The pipeline
-description: What happens between "upload" and "ready" — five stages, what each one costs, and what it writes.
+description: What happens between "upload" and "ready" — each stage, the model it uses, and what it writes.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout'
 import { Cards, Card } from 'fumadocs-ui/components/card'
 
-Ingestion is one background job with five stages. Each reports progress on the job, so a client
-polling `GET /jobs/{job_id}` can show exactly where a video is.
+Ingestion is one background job that runs VIDRA's `workflow()` over the video. Each stage
+reports itself on the job, so a client polling `GET /jobs/{job_id}` can show where a video is.
 
 ```
-fetching ─▶ chunking ─▶ analyzing ─▶ indexing ─▶ aggregating ─▶ complete
+fetching ─▶ transcribing ─▶ chunking ─▶ sampling ─▶ analyzing ─▶ indexing ─▶ aggregating ─▶ complete
 ```
 
 ## 1. Fetching
 
-The source — an `http(s)` URL or a local path — is resolved to a cached local file plus its
-Storage identity. Both forms come out the same shape, because a URL and a path are the same
-thing to everything downstream.
+The backend downloads the source URL into `data/sources/`, hashing the bytes as they stream.
+The first 16 hex characters of the **SHA-256** become the **video id** — so the same file is
+always the same video, and two different files that share a name stay separate.
 
-The file's content hash becomes the **video id**: `sha1(bytes)[:16]`. Not the filename — two
-different uploads both called `test.mp4` would otherwise merge into one video's vectors.
+PyAV then probes the file for its duration, frame rate and streams (`media.json`).
 
-This stage is reported first because a slow download of a large video is the one stage that can
-run for minutes with nothing to show for it.
+## 2. Transcribing
 
-A poster frame is extracted and written to the bucket before chunking, so a client can render
-the video as soon as it is decodable rather than waiting for analysis to finish. Poster
-extraction is never fatal: a video that analysed fine must not fail its ingest because a
-thumbnail could not be written.
+Only when `transcript` or `diarization` was selected.
 
-## 2. Chunking
+| Step | Model | Runs on |
+|---|---|---|
+| Speech to text | **faster-whisper `small`**, int8, with voice-activity filtering | Your machine |
+| Who is speaking | **pyannote `speaker-diarization-3.1`** — `diarization` only | Your machine |
 
-Four boundary detectors run over the video, their events are fused under a weighting, and the
-resulting cut points become chunks. Three modes are available — a named preset, your own
-weights, or a fixed interval.
+Speech is transcribed once for the whole track (`transcript.raw.json`), before chunking, because
+two of the chunking policies cut on speech.
 
-See [Chunking](/docs/concepts/chunking) for how the fusion works and which preset suits which
-footage.
+## 3. Chunking
 
-## 3. Analyzing
+The video is cut into chunks — the unit everything below is attached to, and what a search hit
+points at. Cuts follow scene changes, speech pauses or speaker turns depending on the upload's
+chunking choice, and every chunk ends up between 5 and 20 seconds.
 
-Every selected analyzer runs over every chunk, in turn. Each analyzer owns its own frame
-sampling, prompt and output shape, so adding one requires no change to ingest, the vector store,
-or the API.
+See [Chunking](/docs/concepts/chunking).
 
-Analyzers are chosen **per upload** because their costs differ wildly: `default_video` bills a
-vision call per chunk; `transcript` is free.
+## 4. Sampling
 
-See [Analyzers](/docs/concepts/analyzers).
+Sending every frame to a vision model would be slow and expensive, so each picture analyzer
+picks a handful of frames per chunk with its own local detector, and near-duplicates are
+dropped. See [Analyzers](/docs/concepts/analyzers).
 
-## 4. Indexing
+The transcript is also cut onto the chunks here, so each chunk carries the words spoken inside it.
 
-Each chunk becomes one point in Qdrant carrying several **named vectors** — one per part of its
-output — so a query about appearance can be compared against a short person description rather
-than competing with a whole record.
+## 5. Analyzing
 
-Embeddings come from `BAAI/bge-small-en-v1.5`, running locally.
+For each chunk and each picture analyzer, the chosen frames are sent to the vision model —
+**OpenAI `gpt-6-luna`** — with a fixed JSON schema. It returns a prose description plus
+structured fields: setting, people, objects, actions, changes, tags and visible text
+(`descriptions.json`).
 
-The vector's identity is derived from `video_id | analyzer | start | end | chunk_config`, so
-re-ingesting the same chunk upserts instead of duplicating. Keying on the time span rather than a
-positional index matters: chunk 12 of one chunking run is a different moment than chunk 12 of
-another, so a positional id would silently rebind a vector to the wrong timeframe.
+This is usually the longest stage, and the one that costs money.
 
-See [Retrieval](/docs/concepts/retrieval).
+## 6. Indexing
 
-## 5. Aggregating
+Each chunk's descriptions and transcript are embedded with **OpenAI `text-embedding-3-small`**
+(1536 dimensions) and written to the video's folder, which doubles as the search index. See
+[Retrieval](/docs/concepts/retrieval).
 
-Twelve video-level passes run over the analyzer output that was just written — not over the
-video. That is what makes re-summarising cheap: nothing has to be re-analysed.
+## 7. Aggregating
 
-Results are cached and reused unless forced, because five of the twelve bill LLM calls. They are
-recomputed automatically when the analyzer set changes: a summary written before `people` ran
-describes a video it could not see people in, and serving it would be confidently out of date.
+Video-level passes run over what was just written — not over the video. That is what makes
+re-summarising cheap: nothing has to be re-analysed. Which ones run depends on `VIDRA_TIER` and
+on which analyzers ran. See [Aggregators](/docs/concepts/aggregators).
 
-See [Aggregators](/docs/concepts/aggregators).
+A poster frame (one second in) is saved last, for the video card.
 
 ## What gets written
 
-| Where | What | Regenerable |
-|---|---|---|
-| Supabase Storage | The video, under `{video_id}/{filename}`, plus `{video_id}/poster.jpg` | No |
-| `data/records/` | One JSON record per video: chunk spans, every analyzer's output, every aggregate | No — this is the analysis |
-| `data/vectordb/` | Qdrant points, one per chunk per analyzer, with five named vectors | Rebuildable from records |
-| `data/cache/` | The decoded local copy, keyed by content hash | Yes — costs a re-download |
+Everything lands under `backend/data/`:
+
+| Where | What |
+|---|---|
+| `out/<id>/media.json` | Duration, frame rate, streams |
+| `out/<id>/transcript.raw.json`, `transcript.json` | Whisper output for the whole track, then cut per chunk |
+| `out/<id>/timeline.json` | The chunk spans, and which policy produced them |
+| `out/<id>/descriptions.json` | The vision model's answer per chunk per analyzer |
+| `out/<id>/embedded.json`, `store/` | The embeddings and the search index |
+| `out/<id>/aggregates/*.json` | One file per video-level result |
+| `out/<id>/manifest.json` | What ran, with which models and settings |
+| `sources/`, `posters/`, `videos/`, `jobs/` | The downloaded file, its poster, the ingest request, job state |
 
 ## Re-running
 
-Ingest is **idempotent on the content hash**, which is why there is no separate re-index
-endpoint: handing core the same source URL again re-analyses the same video in place.
-
-| You change | What happens |
-|---|---|
-| Nothing | Analyzers that already ran keep their output; requested new ones are added |
-| The analyzer set | New analyzers run; existing vectors for other analyzers are untouched; all aggregates recompute |
-| The chunking | Chunk boundaries change, so every old vector for the video is dropped — they no longer describe anything that exists |
+Re-indexing from the app hands the backend the same source URL again. The bytes hash to the same
+video id, so the pipeline runs again into the same folder — with the analyzers and chunking now
+asked for.
 
 <Callout type="info">
-  Aggregators can be re-run on their own with `POST /videos/{video_id}/aggregates`. Since they
-  read stored analyzer output rather than the video, that costs no re-analysis at all — only the
-  LLM calls for the five that need them.
+  Aggregates can be re-run on their own with `POST /videos/{video_id}/aggregates`. Since they
+  read stored output rather than the video, that costs no re-analysis — only the LLM calls for
+  the aggregates that make them.
 </Callout>
 
 ## Timing
 
-Ingestion takes minutes, which is why every ingest route returns `202` and a job id rather than
-holding the connection open. As a reference point: a five-minute video needs roughly 110 seconds
-for the boundary detectors alone, before a single vision call is made.
+Ingestion takes minutes, which is why the ingest route returns `202` and a job id rather than
+holding the connection open. As a reference point: a 5-minute screen-recorded tutorial with
+`default_video`, `diarization` and `ocr` came out as 24 chunks and 312 kept frames, and took
+about 5½ minutes on an Apple Silicon laptop. Frame sampling alone took 35 seconds.
+
+The backend processes **one video at a time**; a second upload waits in `queued` until the first
+finishes.
 
 <Cards>
-  <Card title="Chunking" href="/docs/concepts/chunking" description="Four signals, three modes, and why weights renormalise." />
+  <Card title="Chunking" href="/docs/concepts/chunking" description="Four policies, and which upload choice picks each." />
   <Card title="Analyzers" href="/docs/concepts/analyzers" description="The six per-chunk passes and what each produces." />
-  <Card title="Aggregators" href="/docs/concepts/aggregators" description="Twelve video-level passes and their dependencies." />
-  <Card title="Retrieval" href="/docs/concepts/retrieval" description="Named vectors, filters, detail levels, query vs ask." />
+  <Card title="Aggregators" href="/docs/concepts/aggregators" description="Eleven video-level passes, by cost tier." />
+  <Card title="Retrieval" href="/docs/concepts/retrieval" description="Hybrid search, detail levels, query vs ask." />
 </Cards>

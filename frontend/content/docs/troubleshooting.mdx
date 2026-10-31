@@ -13,130 +13,150 @@ import { Accordion, Accordions } from 'fumadocs-ui/components/accordion'
 
 <Accordion title="Cannot reach the analysis backend">
 
-The frontend cannot connect to core. Check, in order:
+The frontend cannot connect to the backend. Check, in order:
 
-1. Is core running? `curl http://127.0.0.1:8077/health`
-2. Does `CORE_API_URL` in `.env.local` match the port core actually bound?
-3. Does `CORE_API_TOKEN` match `VIDEOMIND_API_TOKEN`? A mismatch is a `401`, not a connection
-   error — the message will say `Invalid or missing X-Core-Token`.
+1. Is the backend running? `curl http://127.0.0.1:8077/health`
+2. Does `CORE_API_URL` in `.env.local` match the port it actually bound?
+3. Does `CORE_API_TOKEN` match on both sides? A mismatch is a `401`, not a connection error —
+   the message will say `Invalid or missing X-Core-Token`.
 
 </Accordion>
 
-<Accordion title="/health shows storage.ok: false, status: degraded">
+<Accordion title="Opening the backend in a browser shows Not Found">
 
-Core cannot reach the Storage bucket. Reads still work; ingest will fail.
+The page says `{"detail":"Not Found"}`: you're on a path that doesn't exist. `/` redirects to the API docs at `/docs`; the app itself is
+the frontend, at `http://localhost:3000`.
 
-- `SUPABASE_URL` or `SUPABASE_SERVICE_ROLE_KEY` is wrong in `core/.env`.
-- The `videos` bucket does not exist. Create it once per project:
+</Accordion>
 
-```python
-from supabase import create_client
-create_client(URL, SERVICE_ROLE_KEY).storage.create_bucket("videos", options={"public": True})
-```
+<Accordion title="Sign-up asks for 6 digits but the email has 8">
 
-- `VIDEOMIND_BUCKET` points at a bucket that is not there.
-
-The `error` field in the health response carries the underlying message.
+The sign-up form's code length must match Supabase's **Email OTP Length** (Authentication →
+Email). It is set to 8 in `frontend/components/supaauth/signup.tsx` (`OTP_LENGTH`); change it if
+your project sends a different length.
 
 </Accordion>
 
 <Accordion title="A video is stuck on Analyzing">
 
-Usually normal. Indexing is genuinely slow — a five-minute video needs roughly 110 seconds for the
-boundary detectors alone, before a single vision call.
+Usually normal. A five-minute video takes around five minutes, and the first ingest after
+installing also downloads several model weights. Uploads are processed one at a time, so a second
+video stays `queued` until the first finishes.
 
-Check `stage` on the row or the job to see what it is doing. If it has not moved in a long time,
-read core's logs: an analyzer failing loudly there is the usual cause.
+Check `stage` on the row or the job to see what it is doing: `transcribing`, `chunking`,
+`sampling`, `analyzing`, `indexing` or `aggregating`. If it hasn't moved for a long time, read the
+backend's terminal output.
 
 </Accordion>
 
-<Accordion title="A video failed with 'the analysis backend restarted before this video finished'">
+<Accordion title="A video failed with 'the server restarted while this job ran'">
 
-Exactly what it says. Jobs live in memory, so restarting core loses any job in flight.
+Exactly what it says: the backend stopped while that ingest was in progress. Jobs are saved to
+disk, so the backend knows the job never finished and reports it as failed instead of leaving it
+hanging. **Re-index** the video.
 
-The row was failed on purpose rather than left waiting on a job that no longer exists. **Re-index**
-is the way out — and because ingest is idempotent on the content hash, any work that did complete
-before the restart is reused.
+</Accordion>
+
+<Accordion title="A job failed with an OpenAI 401 or AuthenticationError">
+
+`OPENAI_API_KEY` in `backend/.env` is wrong, revoked or out of credit. Test it:
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" https://api.openai.com/v1/models \
+  -H "Authorization: Bearer $OPENAI_API_KEY"
+```
+
+`200` means the key works. Restart the backend after changing `.env`.
+
+</Accordion>
+
+<Accordion title="diarization fails to load">
+
+Its pyannote models are gated. Accept the terms on
+[pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1) and
+[pyannote/segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0) with the account
+the token belongs to, then set `HF_TOKEN` in `backend/.env`.
 
 </Accordion>
 
 <Accordion title="The agent says a video isn't searchable">
 
-Its status is not `ready`. That is the intended behaviour, not a bug: the agent is instructed to
-say a video is still being analysed rather than searching it and returning nothing.
+Its status is not `ready`. That is intended: the agent is told to say a video is still being
+analysed rather than searching it and returning nothing.
 
 </Accordion>
 
 <Accordion title="The agent says it cannot answer that for this video">
 
-The video was analysed without the analyzer that question needs — no `people`, so no question
-about who was there; no `diarization` or `transcript`, so nothing to quote.
+The video was analysed without the analyzer that question needs — no `diarization` or
+`transcript`, so nothing to quote; no `people`, so no linked people.
 
-Re-index with the missing analyzer. Re-running with the same chunking keeps everything that
-already ran and adds the new pass; aggregates then recompute automatically because the analyzer
-set changed.
+Re-index with the missing analyzer. Aggregates are recomputed as part of the new ingest.
 
 </Accordion>
 
-<Accordion title="Search returns nothing for something that is clearly in the video">
+<Accordion title="Search returns nothing useful for something that is clearly in the video">
 
-In order of likelihood:
+1. **The wrong `analyzer`.** `default_video` searches everything; `ocr`, `people` or
+   `object_detection` searches only that analyzer's descriptions, and returns nothing if it
+   never ran.
+2. **The wrong `video_ids`.** Check the video is tagged, or that nothing is tagged.
+3. **Try both wordings.** Search is hybrid — quote the exact words for something said or shown
+   on screen, or describe it in a full phrase for something seen.
 
-1. **A `score_threshold` is set.** Correct matches routinely score 0.55–0.60, so a threshold
-   deletes them. Leave it unset unless you are testing for absence.
-2. **The wrong `analyzer`.** Appearance, clothing, actions and scenes are all `default_video` —
-   not `people`, which is a separate pass that may not have run.
-3. **The wrong `field`.** A chunk missing the requested field is excluded, not matched on empty
-   text.
-4. **Keywords instead of a phrase.** The query is matched semantically against the whole record;
-   full descriptive phrases beat keyword lists.
-5. **A filter.** Every filter is a hard `AND` against exact stored labels and can only remove
-   results.
+</Accordion>
+
+<Accordion title="/query returns 400: filters are not supported">
+
+The backend doesn't support structured filters. Drop `filters`, and narrow with `video_ids`,
+`analyzer` and the query text.
 
 </Accordion>
 
 <Accordion title="Upload fails on a large file">
 
-Supabase caps uploads at 50 MB by default. Raise the bucket limit, or add the video by URL
-instead — that path never pushes the bytes through the browser or through core's process.
-
-`POST /videos` (multipart) has the same problem at the API level: it pushes the whole video
-through core's process and whatever body-size cap sits in front of it. `POST /videos/url` is the
-route for anything large.
+Supabase caps uploads at 50 MB by default. Raise the `project-assets` bucket's file size limit,
+or add the video by URL instead.
 
 </Accordion>
 
 <Accordion title="An aggregate is missing">
 
-Check whether it was **skipped** rather than failed. An aggregator whose analyzer the video lacks
+Check whether it was **skipped** rather than failed. An aggregate whose analyzer the video lacks
 is skipped by design:
 
 | Aggregate | Needs |
 |---|---|
-| `entities`, `entity_timelines`, `cooccurrence` | the `people` analyzer |
-| `speaker_stats`, `sentiment` | `diarization` |
+| `speaker_stats` | `diarization` |
+| `entities` | `people` |
 | `object_entities` | `object_detection` |
+| `text_entities` | `ocr` |
 
-The re-run response lists `skipped` separately from `failed` for exactly this reason.
-
-</Accordion>
-
-<Accordion title="Aggregates look out of date">
-
-They are cached, and reused unless forced. Pass `force=true` when testing a change to one, or you
-will be reading yesterday's output.
-
-The exception: when the analyzer set changes, everything is recomputed regardless — the response
-flags it as `recomputed_because_analyzers_changed`.
+The LLM aggregates (`summary`, `chapters`, `events` and the three entity ones) also only run when
+`VIDRA_TIER` is `llm`, the default.
 
 </Accordion>
 
-<Accordion title="Changes to core seem to have no effect">
+<Accordion title="Poster images don't load">
 
-On Windows, `pkill` does not reliably kill Python. A server that fails to bind exits quietly, so
-requests keep hitting the **old** process and you appear to be running stale code.
+Posters are served by the backend at `/media/<id>/poster.jpg`, using `BACKEND_PUBLIC_URL` to build
+the address. If the browser reaches the backend at anything other than
+`http://127.0.0.1:8077`, set `BACKEND_PUBLIC_URL` and re-index.
 
-<Tabs items={['PowerShell', 'bash']}>
+</Accordion>
+
+<Accordion title="Changes to the backend seem to have no effect">
+
+An old server may still be holding the port, so requests hit stale code. Free it and start again:
+
+<Tabs items={['bash', 'PowerShell']}>
+<Tab value="bash">
+
+```bash
+lsof -ti:8077 | xargs kill
+```
+
+</Tab>
 <Tab value="PowerShell">
 
 ```powershell
@@ -146,34 +166,14 @@ Get-NetTCPConnection -LocalPort 8077 -State Listen |
 ```
 
 </Tab>
-<Tab value="bash">
-
-```bash
-lsof -ti:8077 | xargs kill -9
-```
-
-</Tab>
 </Tabs>
-
-Check the port first whenever changes seem not to apply.
-
-</Accordion>
-
-<Accordion title="diarization fails to load">
-
-Its pyannote model is gated. Accept the terms at
-[pyannote/speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1),
-then set `HF_TOKEN` in `core/.env`.
 
 </Accordion>
 
 <Accordion title="A transcript contains text that was never spoken">
 
-Whisper hallucinates on non-speech audio. VAD filtering is on, which handles most of it. Language
-is detected once per video and pinned — per-segment detection produced fluent German from an
-English clip.
-
-Long stretches of music or room tone are the usual trigger.
+Whisper hallucinates on non-speech audio. Voice-activity filtering is on, which handles most of
+it; long stretches of music or room tone are the usual trigger.
 
 </Accordion>
 
@@ -181,47 +181,44 @@ Long stretches of music or room tone are the usual trigger.
 
 ## Resetting
 
-Everything core writes lives under `core/data/`:
+Everything the backend writes lives under `backend/data/`:
 
 <Tabs items={['bash', 'PowerShell']}>
 <Tab value="bash">
 
 ```bash
-rm -rf core/data
+rm -rf backend/data
 ```
 
 </Tab>
 <Tab value="PowerShell">
 
 ```powershell
-Remove-Item -Recurse -Force core/data
+Remove-Item -Recurse -Force backend/data
 ```
 
 </Tab>
 </Tabs>
 
 <Callout type="warn">
-  This deletes the analysis — records and vectors — not just the cache. Application rows survive
-  in Postgres, so afterwards those videos will show as `failed` and re-index is the recovery.
-
-  To clear only the regenerable part, delete `core/data/cache` instead. That costs a re-download
-  and nothing else.
+  This deletes the analysis itself. Application rows survive in Postgres, so afterwards those
+  videos have nothing behind them — re-index them, or delete them. To free disk space without
+  losing analysis, delete `backend/data/sources/` instead; the downloaded copies are only
+  needed again for a re-index, which downloads them again.
 </Callout>
 
 ## Environment notes
 
-These look like things to fix and are not:
+These look like problems and aren't:
 
-- **`USE_TF=0` is set before anything imports transformers.** Without it, transformers imports
-  TensorFlow — several seconds of startup and a wall of banners, for a backend nothing here uses.
-- **The torchcodec warning is filtered, not fixed.** Audio is decoded with PyAV and handed to
-  pyannote in memory, so torchcodec is never used.
-- **PaddleOCR was tried and removed.** It broke `cv2`, forced a torch import order, had no GPU
-  build for CUDA 13, and needed `enable_mkldnn=False` to run at all. EasyOCR replaced it.
-- **Python 3.13 with torch 2.11.0+cu130 is the tested combination.** Newer than most guides
-  assume, and it works.
+- **`objc[…]: Class AVF… is implemented in both …` on macOS.** PyAV and OpenCV each bundle
+  ffmpeg's libraries. Harmless.
+- **A `yolo11n.pt` file appears in `backend/`.** Ultralytics downloads weights into the working
+  directory on first use. `*.pt` is git-ignored.
+- **The first ingest is much slower than the rest.** Whisper, pyannote, GLiNER, DistilBERT and
+  the detectors download on first use, then load from cache.
 
 ## Verifying against a live server
 
-Verify changes against a running server, not by reading code. Several bugs in this project —
-broken synthesis, stale ports, wrong media paths — only appeared over HTTP.
+Verify changes against a running server, not by reading code: ingest a short clip, then call
+`/query` and `/ask` on it. Several problems only show up over HTTP.

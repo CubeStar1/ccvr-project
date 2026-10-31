@@ -1,59 +1,63 @@
 ---
 title: Architecture
-description: How a question travels from the chat box to a vector search and back as a playable clip.
+description: How a question travels from the chat box to a search and back as a playable clip.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout'
 
-![FalconVQA architecture](/landing/falcon-vqa-arch.png)
-
 ## The shape
 
 ```
-Next.js  ──►  /api/agent (AI SDK tool loop)  ──►  core (FastAPI)  ──►  Qdrant
-   │                    │                              │
-   │                    └──► Supabase Postgres         └──► Supabase Storage
-   └──► Supabase Storage (uploads → public URL)             (video bytes, posters)
+browser
+  │
+  ▼
+Next.js app ──► Supabase  (auth · Postgres · project-assets bucket)
+  │
+  │  HTTP, server-side only  (lib/core/client.ts, X-Core-Token)
+  ▼
+backend/app.py ──► backend/engine.py ──► vidra (library) ──► backend/data/
+  (FastAPI)          (jobs, shapes)         │
+                                            ├─ local: Whisper, pyannote, OpenCV, YOLO, CLIP, GLiNER, DistilBERT
+                                            └─ OpenAI: vision model, embeddings, LLM
 ```
-
-Four processes, and a clean split of responsibilities:
 
 | Component | Owns |
 |---|---|
 | **Next.js app** | Auth, projects, ownership, conversations, the agent loop, all UI |
-| **core (FastAPI)** | Chunking, analysis, indexing, aggregation, search, question answering |
-| **Supabase Postgres** | Projects, conversations, messages, `video_core` rows, RLS |
-| **Supabase Storage** | Video bytes and posters — core's bucket, plus the app's upload bucket |
-| **Qdrant** | Chunk vectors, five named fields per point, embedded in core's process |
+| **Supabase** | Users, the `projects` / `conversations` / `messages` / `video_core` tables with RLS, and uploaded video files |
+| **backend** | The HTTP API, background jobs, and translating VIDRA's output into the API's response shapes |
+| **vidra** | Everything about understanding a video: transcription, chunking, frame sampling, description, embedding, search, aggregates |
+| **backend/data** | Every analysed video's folder, which is also its search index. No database server |
 
 <Callout type="info">
-  **HTTP is the external boundary; composition is in-process.** The UI and any future MCP server
-  talk to core over HTTP, but aggregators call analyzer output directly. Core never calls itself
-  over HTTP.
+  The backend kept the routes and response shapes of the original `core/` service, so the
+  frontend's client, tools and pages work unchanged. `engine.py` is where VIDRA's vocabulary —
+  samplers, policies, aggregate ids — is mapped onto the old one.
 </Callout>
 
 ## Ingesting a video
 
 ```
-browser ──upload──► Supabase Storage (app bucket)
+browser ──upload──► Supabase Storage (project-assets)
    │                        │
    └──POST /api/videos──────┘  (public URL)
               │
               ├─► insert video_core row (status: pending)
-              └─► POST /videos/url ──► core: 202 + job_id
+              └─► POST /videos/url ──► backend: 202 + job_id
                                         │
-                                        └─► background thread:
-                                            fetch → chunk → analyze → index → aggregate
+                                        └─► worker thread (one video at a time):
+                                            download → vidra.workflow() → poster
                                                 │
-                                                ├─► Supabase Storage (core bucket): mp4 + poster
-                                                ├─► data/records/: the analysis
-                                                └─► Qdrant: one point per chunk per analyzer
+                                                ├─► data/sources/  the downloaded file
+                                                ├─► data/out/<id>/ transcript, chunks, descriptions,
+                                                │                  embeddings, aggregates
+                                                └─► data/jobs/     job state, every stage
 
 browser ──poll /api/videos──► reconcile row against GET /jobs/{id} ──► status: ready
 ```
 
-The row exists before core has seen a byte, because the video's id is the hash of its contents.
-Everything identifying arrives later, through the job.
+The row exists before the backend has seen a byte, because the video's id is the hash of its
+contents. Everything identifying arrives later, through the job.
 
 ## Answering a question
 
@@ -64,14 +68,14 @@ user message
 POST /api/agent
    ├─ load the project's video_core rows  (RLS)
    ├─ build a system prompt carrying each video's analyzers and aggregates
-   └─ streamText with 9 tools, up to 15 steps
+   └─ streamText with the video tools, up to 15 steps
         │
         ├─ tool call ──► resolveScope()  ──► allowed core_video_ids
         │                                     │
         │                                     ▼
-        │                              core: POST /query | /ask | GET /chunks | /aggregates | /entities
+        │                       backend: POST /query | /ask | GET /chunks | /aggregates | /entities
         │                                     │
-        │                                     └─► Qdrant search / record read
+        │                                     └─► vidra search over data/out, or a file read
         │
         ├─ show_clips ──► (no backend call) ──► artifact panel renders the reel
         │
@@ -80,47 +84,42 @@ POST /api/agent
                                           └─► persist messages to Postgres
 ```
 
-The agent never receives a raw core response. Every tool reshapes it: timestamps into `m:ss`,
-`video_id` into the row's `playback_url` and title, and core's error messages passed through
-verbatim because they are written to be the correction the model needs.
+The agent never receives a raw backend response. Every tool reshapes it: timestamps into `m:ss`,
+`video_id` into the row's `playback_url` and title, and the backend's error messages passed through
+as written, because they are meant to be the correction the model needs.
 
-## Inside core
+Two different models are involved in a chat. The **chat model** — whichever one is picked in the
+model selector — runs the agent loop and writes the reply. The **backend's models** (OpenAI by
+default) understood the video at ingest, and write the answers `/query` and `/ask` return.
+
+## Inside the backend
 
 ```
-chunk_video()            three modes: preset | weights | interval
-  boundaries/            speaker, silence, cut, semantic detectors
-  chunking/chunker.py    weighted fusion → boundaries → chunks
-analyzers/               per-chunk passes,  registry in __init__.py
-aggregators/             video-level passes, registry in __init__.py
-vectordb/                BGE embeddings + Qdrant (named vectors)
-api/core.py              upload / query / ask / aggregate  (the real logic)
-api/app.py               a thin HTTP layer over it
-api/ui.py                the built-in web UI, mounted only when VIDEOMIND_UI != 0
-storage.py               Supabase Storage ↔ local cache
-paths.py                 every path, all env-overridable
+backend/
+  app.py       FastAPI routes; validation and error translation only
+  engine.py    jobs, download, ingest, and every read in the API's shapes
+vidra/vidra/
+  workflow.py  the whole ingest, start to finish
+  video_rag/   media probe, audio, boundaries, samplers, describe, embed, search
+  aggregates/  the eleven video-level passes, by tier
+  shared/      model roles, storage backends, contracts
 ```
 
-`api/app.py` is deliberately thin. All logic lives in `api/core.py`, which is importable — so a
-future MCP server, a CLI or a batch script is a new caller, not a new implementation.
+`app.py` is deliberately thin. All logic lives in `engine.py`, which is importable — a script, a
+CLI or an MCP server is a new caller, not a new implementation.
 
 ## Decisions worth knowing
 
-**Videos are URLs outside, paths inside.** Every request and response speaks Storage URLs;
-everything below `storage.py` gets a local path and does not know Storage exists. That boundary is
-one module because it is the only place both forms are valid at once.
+**The video is downloaded, not streamed.** Every stage re-opens the file and seeks per chunk —
+an access pattern priced for a local disk. The backend downloads the source URL once into
+`data/sources/` and every stage reads that copy.
 
-**The video is downloaded, not streamed.** Analyzers each re-open the file and seek per chunk —
-an access pattern priced for a local disk. Frame reading uses `grab()`/`retrieve()` rather than
-per-frame seeking, because seeking makes H.264 restart from a keyframe, measured at ~22× the cost
-per frame. Paying that to the network instead would be far worse.
+**Files, not a database server.** VIDRA's `Folder` store keeps each video's index in its own
+folder. Nothing to run or migrate, and deleting a video is deleting a folder. VIDRA can also store
+to Supabase if this ever needs to move off one machine.
 
-**No local path is ever stored.** A stored path goes stale the moment the data directory moves.
-Records hold `storage_path`; the local file is re-derived from the content hash on demand and
-re-downloaded if the cache is cold.
-
-**Analyzers and aggregators are registries.** Adding either is one module and one line. Nothing in
-ingest, the store, or the API changes — and because the frontend builds its analyzer list from
-`/api/core/capabilities` at runtime, nothing in the frontend changes either.
+**One ingest at a time.** Every ingest loads Whisper, pyannote and the detectors onto the same
+GPU. A single worker keeps memory predictable; extra uploads wait in `queued`.
 
 **A clip is a range, not a stream.** There is no per-clip URL anywhere. The panel loads the mp4
 once and seeks, so several clips from one video cost one load between them.
@@ -130,23 +129,22 @@ once and seeks, so several clips from one video cost one load between them.
 | Piece | Where |
 |---|---|
 | Next.js app | Vercel, or any Node host |
-| core | A GPU host — it runs Whisper, pyannote, YOLO, EasyOCR and CLIP locally |
-| Postgres + Storage | Supabase Cloud |
-| Qdrant | Embedded in core's process by default; can be pointed at a server |
+| backend | A machine with enough memory for Whisper and pyannote — a GPU helps. Apple Silicon works |
+| Postgres + Storage + Auth | Supabase Cloud |
 
 <Callout type="warn">
-  Core's port must not be publicly routable. It has no users and no row-level security —
-  `VIDEOMIND_API_TOKEN` is a boundary, not an authorisation model. See
+  The backend's port must not be publicly routable. It has no users and no row-level security —
+  `CORE_API_TOKEN` is a boundary, not an authorisation model. See
   [Authentication](/docs/api/authentication).
 </Callout>
 
 ## Known limitations
 
-- **Cross-video entity linking is not built.** Entity ids are meaningful within one video only.
-- **Within-chunk person tracking fragments.** IoU tracking at 1 fps loses people who move between
-  sampled frames; `box_id` is a referent within a chunk, not an identity claim.
-- **Qdrant payload indexes are inert in embedded mode.** Filtering is correct but scans. Fixed by
-  running Qdrant as a server — no code change needed.
-- **Jobs live in memory.** A restart loses job history; vectors and records survive on disk.
-- **Chapters can return a single chapter** on unbroken single-location footage. Arguably correct,
-  but not useful in a timeline.
+- **Chunk length is fixed** at 5–20 s, and fixed intervals at 20 s. VIDRA's `workflow()` doesn't
+  take the upload dialog's bounds yet.
+- **No structured search filters.** `/query` rejects `filters`; `field` and `score_threshold`
+  are ignored.
+- **Direct video URLs only.** YouTube and other page links aren't downloaded, even though the
+  agent's `add_video` tool describes YouTube support.
+- **One ingest at a time.**
+- **Entity linking is within one video.** The same person in two videos is two entities.

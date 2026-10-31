@@ -339,8 +339,10 @@ def chunk_out(video_id: str, chunk: dict[str, Any], docs: dict[str, Any],
                              "actions": _strings(s.get("actions")),
                              "tags": _strings(s.get("tags"))}
         elif analyzer == "ocr":
-            out[analyzer] = {"texts": [{"text": t} for t in _strings(s.get("visible_text"))],
-                             "summary": text}
+            # The vision model reads text as {text, context}; core's shape is the same.
+            texts = [t if isinstance(t, dict) else {"text": str(t)}
+                     for t in s.get("visible_text") or []]
+            out[analyzer] = {"texts": texts, "summary": text}
         elif analyzer == "people":
             people = [p if isinstance(p, dict) else {"description": p}
                       for p in s.get("people") or []]
@@ -456,10 +458,14 @@ def _normalise(name: str, payload: dict[str, Any]) -> dict[str, Any]:
         p["speaker_count"] = p.get("speakers", 0)
         p["speakers"] = [{**row, "share": row.get("share", 0)} for row in p.get("by_speaker", [])]
     elif name.startswith("entities:"):
-        rows = [{**e, "name": e.get("label"), "first_seen": e.get("start_ts"),
-                 "last_seen": e.get("end_ts"),
-                 "description": e.get("narrative") or e.get("account") or e.get("label")}
-                for e in p.get("entities", [])]
+        rows = []
+        for e in p.get("entities", []):
+            # VIDRA's account is {text, narrative}; core's entities carried plain strings.
+            account = e.get("account")
+            story = account.get("narrative") if isinstance(account, dict) else account
+            rows.append({**e, "name": e.get("label"), "first_seen": e.get("start_ts"),
+                         "last_seen": e.get("end_ts"), "narrative": e.get("narrative") or story,
+                         "description": e.get("narrative") or story or e.get("label")})
         p["entities"] = rows
         if name == "entities:objects":
             p["objects"] = [{**e, "object_id": e["entity_id"]} for e in rows]

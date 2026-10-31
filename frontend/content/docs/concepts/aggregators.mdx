@@ -1,162 +1,109 @@
 ---
 title: Aggregators
-description: Twelve video-level passes that hold the cross-segment conclusions no single moment contains.
+description: Eleven video-level passes that hold the cross-chunk conclusions no single moment contains.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout'
 
 An analyzer describes one chunk. An aggregator reads **every** chunk at once and produces a
-conclusion about the whole video — a summary, a chapter breakdown, who was present throughout,
-what stands out.
+conclusion about the whole video — a summary, a chapter breakdown, who talked most, what
+happened in order.
 
-This is the part retrieval structurally cannot do. "How busy was the store" cannot be answered by
-finding the five most relevant moments; it needs all of them, counted.
+This is the part retrieval structurally cannot do. "How much of this is talking?" cannot be
+answered by finding the five most relevant moments; it needs all of them, counted.
 
-## The twelve
+## The eleven
 
-| Aggregator | Depends on | LLM | Produces |
+Each aggregator has a **tier**, which is what it costs to run.
+
+| Aggregate | Tier | Needs | Produces |
 |---|---|---|---|
-| `stats` | – | no | Counts over time, busiest/quietest moment, speech totals, object frequencies |
-| `novelty` | – | no | Chunks ranked by how unlike the rest they are, plus outliers |
-| `speaker_stats` | `diarization` | no | Talk time, turns, handovers, share per speaker |
-| `sentiment` | `diarization` | no | Sentiment of spoken language, per speaker and over time |
-| `ner` | – | no | Named entities across speech, scene text and OCR |
-| `summary` | – | **yes** | Tiered summaries, finest first, plus key points and topics |
-| `chapters` | – | **yes** | Consecutive chunks grouped into titled sections |
-| `events` | – | **yes** | Discrete timestamped events with actor and category |
-| `entities` | `people` | **yes** | People linked across chunks, with written narratives |
-| `entity_timelines` | `entities` | no | Presence and dwell time per person |
-| `cooccurrence` | `entities` | no | Which people appear together, and with which objects |
-| `object_entities` | `object_detection` | **yes** | Objects tracked across chunks |
+| `stats` | free | – | Duration, chunk count and lengths, frames sampled, words, words per minute |
+| `coverage` | free | – | Which chunks have picture, sound, both or neither |
+| `speaker_stats` | free | `diarization` | Talk time, share, turns, handovers and the dominant speaker |
+| `ner` | local | – | Named entities in speech and descriptions — **GLiNER small v2.1** |
+| `sentiment` | local | – | Sentiment per chunk, the mean, and turning points — **DistilBERT SST-2** |
+| `summary` | llm | – | A whole-video summary, topics, setting and notable moments |
+| `chapters` | llm | – | Consecutive chunks grouped into titled, summarised sections |
+| `events` | llm | – | Discrete timestamped events, each with a kind |
+| `entities` | llm | `people` | People linked across chunks, each with a written account |
+| `object_entities` | llm | `object_detection` | Objects linked across chunks |
+| `text_entities` | llm | `ocr` | On-screen text (titles, labels, slides) linked across chunks |
+
+"Free" is plain counting. "Local" runs a small model on your machine. "llm" calls
+**OpenAI `gpt-6-luna`**.
 
 <Callout type="info">
-  An aggregator whose analyzer the video lacks is **skipped, not failed**. The entity chain needs
-  `people`; `sentiment` and `speaker_stats` need `diarization`. Skipped ids come back in the
-  `skipped` list rather than as an error.
+  An aggregator whose analyzer the video lacks is **skipped, not failed**. Skipped ids come back
+  in the re-run result's `skipped` map with the reason.
 </Callout>
 
-## Dependencies and ordering
+## Choosing the tier
 
-`depends_on` names either an analyzer (a requirement on the video) or another aggregator (which
-gets pulled in and run first). Execution order is derived from the graph, so a new aggregator
-that reads another's output just declares it.
+`VIDRA_TIER` in `backend/.env` sets the costliest tier an ingest runs:
 
-```
-people ──▶ entities ──▶ entity_timelines
-                    └─▶ cooccurrence
-diarization ──▶ speaker_stats
-            └─▶ sentiment
-object_detection ──▶ object_entities
-```
+| `VIDRA_TIER` | Runs |
+|---|---|
+| `free` | `stats`, `coverage`, `speaker_stats` |
+| `local` | plus `ner`, `sentiment` |
+| `llm` (default) | plus `summary`, `chapters`, `events` and the three entity aggregates |
 
-## Caching
-
-Results already stored are reused unless `force` is set. This matters: `summary`, `chapters`,
-`events`, `entities` and `object_entities` each bill API calls, so re-uploading a video to add one
-analyzer would otherwise re-buy its whole summary.
-
-Ingestion runs aggregators with `force=false` for exactly that reason. The response reports
-`llm_calls_saved` so you can see what the cache was worth.
-
-<Callout type="warn">
-  Aggregates are recomputed automatically when the **analyzer set changes**. A summary written
-  before `people` ran describes a video it could not see people in, and serving it would be
-  confidently out of date. The response flags this as
-  `recomputed_because_analyzers_changed: true`.
-</Callout>
+The agent's `ask_video` tool leans on `summary` and `chapters`, so keep the default unless cost
+matters more than whole-video answers.
 
 ## Notable outputs
 
 ### `summary`
 
-A hierarchy built by halving the video until a leaf covers a few chunks. `tiers[0]` is the finest
-level and the last tier is the whole video. Depth follows length rather than a fixed block size —
-a 39-chunk video produced 4 tiers of 8 / 4 / 2 / 1 sections.
-
 ```json
 {
-  "summary": "…a few sentences covering the whole video",
-  "key_points": ["…"],
-  "topics": ["…"],
-  "depth": 4,
-  "tiers": [{ "level": 0, "section_count": 8, "sections": [{ "summary": "…", "start": 0.0, "end": 24.0, "chunk_ids": [0, 1, 2] }] }],
-  "sections": [ "…the finest tier, repeated for retrieval" ],
-  "based_on": ["default_video", "diarization"]
+  "summary": "The video is a fast-paced visual introduction to modern HTML, presented through animated title cards and code-editor/browser demonstrations…",
+  "topics": ["HTML document structure and boilerplate", "Elements, tags, headings, paragraphs, and nesting"],
+  "setting": "An animated instructional presentation using code-editor and browser examples…",
+  "notable": ["Code is repeatedly paired with a browser preview to show how markup renders."],
+  "chunks_read": 24,
+  "word_count": 209
 }
 ```
-
-The whole-video summary is a reduction over merged sections, not one huge prompt.
 
 ### `chapters`
 
-Consecutive chunks grouped into titled sections, each with `title`, `summary`, `first_chunk`,
-`last_chunk`, and resolved `start` / `end` / `chunk_ids`. Chapters naming a chunk id that does not
-exist are dropped rather than trusted.
-
-<Callout type="info">
-  On unbroken single-location footage this can return a single chapter. Arguably correct, but
-  not useful in a timeline — the studio panel hides the lane when it is empty.
-</Callout>
+Each chapter has a `title`, a `summary`, its `chunk_ids`, and `start` / `end` in seconds.
+`covers_all_chunks` says whether every chunk landed in a chapter.
 
 ### `events`
 
-Discrete occurrences — someone arriving or leaving, a transaction completing, an object changing
-hands. One entry per event, not one per chunk.
-
 ```json
 {
-  "events": [{ "event": "A customer approaches the register", "chunk_id": 12,
-               "actor": "woman in a grey coat", "category": "arrival",
-               "start": 240.0, "end": 260.0 }],
-  "categories": { "arrival": 4, "transaction": 2 },
-  "based_on": ["default_video", "people"]
+  "events": [{ "what": "An animated introduction presents HTML… and displays “LEARN HTML IN JUST 5 MINUTES.”",
+               "kind": "change", "chunk_id": 0, "start": 0.0, "end": 13.834 }],
+  "count": 36
 }
 ```
 
+The backend also copies `what` to `event` and `kind` to `category`, the names the frontend reads.
+
 ### `stats`
 
-Free, and the right answer to almost every "how many / how often / how busy" question. Contains
-`duration`, `chunks`, and — depending on which analyzers ran — a people series with
-`min`/`max`/`mean`/`busiest`/`quietest`, object frequencies, and speech totals.
+Free, and the right answer to "how long / how many / how much talking". Contains `duration_s`,
+`chunks`, `chunk_s` (`min` / `median` / `max`), the chunking `policy`, `frames_sampled`, `words`,
+`chunks_with_speech` and `words_per_minute`.
 
-### `novelty`
+### Entities
 
-Every chunk scored by how far it sits from the video's own mean. Outliers are those more than two
-standard deviations out, so "unusual" scales with how varied that particular video is rather than
-using a threshold tuned on one clip.
+`entities`, `object_entities` and `text_entities` share one method: every sighting of a person,
+object or piece of text is embedded, sightings are linked into one entity when they match closely
+enough, and then the LLM writes an account of each entity across the video. Each entity carries
+`label`, `appearances`, `chunk_ids`, first and last seen, and `account`.
 
-### `entities`
-
-The one that turns sightings into people. Embeddings are clustered **under constraints**, and only
-then does an LLM write narratives.
-
-- People co-visible in one chunk cannot be the same person.
-- Descriptions too generic to identify anyone are left unlinked.
-- The signature is `clothing` **only**. Blending in `appearance` dragged same-person scores to
-  0.69–0.87 because it drifts and sometimes contains meta-commentary ("same woman as box 3") that
-  the embedding treats as content.
-
-Asked to match people directly, an LLM confidently merges anyone in dark clothing. The clustering
-is what stops that.
-
-### `object_entities`
-
-Reuses the same clusterer with two filters people do not need:
-
-- Static fixtures (counters, shelves) are counted but not tracked — "the counter was present
-  throughout" is true of every frame and tells a search nothing. They come back under `fixtures`.
-- Person-like detections are handed to the people aggregator, which has clothing to identify them
-  with.
+<Callout type="warn">
+  Entity ids are meaningful within one video only. Two videos of the same person produce two
+  unrelated entities.
+</Callout>
 
 ## Running them
 
-- Automatically, at the end of every ingest, with `force=false`.
+- Automatically, at the end of every ingest, up to `VIDRA_TIER`.
 - On demand, with [`POST /videos/{video_id}/aggregates`](/docs/api/aggregates) — returns `202` and
   a job id.
 - From the frontend, on the video detail page, which proxies the same call.
-
-## Adding an aggregator
-
-One module with `id`, `depends_on` and `aggregate(ctx)`, plus a line in
-`videomind/aggregators/__init__.py`. Order is derived from `depends_on`; an aggregator whose
-analyzer is absent is skipped, not failed.
