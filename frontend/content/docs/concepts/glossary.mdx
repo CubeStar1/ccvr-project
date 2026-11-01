@@ -7,7 +7,7 @@ import { Callout } from 'fumadocs-ui/components/callout'
 
 ## `video_id`
 
-SHA-1 of the file's bytes, first 16 hex characters. **Content-derived, not the filename.**
+SHA-256 of the file's bytes, first 16 hex characters. **Content-derived, not the filename.**
 
 Two different files both called `test.mp4` stay separate, and re-uploading the same file is
 recognised as the same video rather than duplicated.
@@ -15,8 +15,8 @@ recognised as the same video rather than duplicated.
 <Callout type="warn">
   Because it is a content hash, two callers who ingested the same bytes are referring to the
   *same* video. Whoever owns the application-side rows has to decide nothing else still points at
-  it before deleting — core has no notion of who else is interested. The frontend's delete route
-  counts references in `video_core` before telling core to remove anything.
+  it before deleting — the backend has no notion of who else is interested. The frontend's delete
+  route counts references in `video_core` before telling the backend to remove anything.
 </Callout>
 
 The id does not exist until the bytes have been downloaded, which is why ingest returns a job id
@@ -25,61 +25,53 @@ rather than a video id, and why the row in `video_core` is created with `core_vi
 ## `chunk_id`
 
 Position within one video's chunk list. **Not globally unique** — every video has a chunk 0, so
-always pair it with a `video_id`.
-
-It is also not stable across re-chunkings: chunk 12 of one run is a different moment than chunk 12
-of another. That is why vectors are keyed on `start`/`end` and `chunk_config` instead of position.
+always pair it with a `video_id`. It is also not stable across re-chunkings: chunk 12 of one run
+is a different moment than chunk 12 of another.
 
 ## `chunk_config`
 
-Which chunking produced a vector.
-
-| Form | Meaning |
-|---|---|
-| `audio_video:5-20` | Preset `audio_video`, 5–20 second bounds |
-| `interval:10` | Fixed 10-second spans |
-| `custom-87e6230f:5-15` | Custom weights, hashed, with 5–15 second bounds |
-
-Vectors are keyed on it, so one video can hold several chunkings side by side and searches can be
-restricted to one. The hash on custom weights is load-bearing: without it two different weightings
-sharing a min/max would collide, and since point ids derive from this key the second ingest would
-silently overwrite the first.
+Which chunking policy produced the chunks: `scene`, `vad`, `speaker` or `uniform`. See
+[Chunking](/docs/concepts/chunking).
 
 ## `analyzer`
 
-One analysis pass, bundling its own frame sampling, prompt and output shape. See
-[Analyzers](/docs/concepts/analyzers). In vector payloads the field is called `extractor_id`,
-which is what the `analyzer_ids` filter maps onto.
+One per-chunk pass. The picture analyzers map onto VIDRA samplers (`default_video` → `uniform`,
+`ocr` → `text`, `people` → `yolo`, `object_detection` → `objects`); `transcript` and
+`diarization` process the soundtrack. See [Analyzers](/docs/concepts/analyzers).
 
-## `aggregator`
+## `sampler`
 
-One video-level pass over stored analyzer output. See [Aggregators](/docs/concepts/aggregators).
+VIDRA's word for a picture analyzer: the rule that decides which frames of a chunk are worth
+sending to the vision model.
 
-## `field` / named vector
+## `aggregate`
 
-Each chunk is one point carrying several vectors, one per part of its output. See
-[Retrieval](/docs/concepts/retrieval).
+One video-level result, computed from stored chunk output. See
+[Aggregators](/docs/concepts/aggregators). Some have different names in VIDRA's files than in the
+API: `speakers` → `speaker_stats`, `entities:people` → `entities`, `entities:objects` →
+`object_entities`, `entities:text` → `text_entities`.
+
+## `tier`
+
+What an aggregate costs: `free` (counting), `local` (a small model on your machine) or `llm` (an
+API call). `VIDRA_TIER` caps which tiers run at ingest.
 
 ## `job_id`
 
 A 12-character hex id for a background job. Ingest and aggregate re-runs both return one.
 
-<Callout type="warn">
-  **Jobs live in memory.** Restarting core loses job history; ingested vectors and records are on
-  disk and survive. The frontend handles this: a job that 404s is checked against core's video
-  list, and the row is either completed from the video itself or failed with a message pointing at
-  re-index.
+<Callout type="info">
+  Jobs are saved to `data/jobs/` as they change, so they survive a restart. A job that was still
+  running when the backend stopped is reported as `failed` with "the server restarted while this
+  job ran" — re-index to try again.
 </Callout>
 
-## `record`
+## Video folder
 
-The JSON file in `data/records/` holding everything known about one video: its chunk spans, every
-analyzer's output attached to each chunk, and every stored aggregate. Named for readability
-(`clip__95e110e2.json`) with the id in the filename so two videos with the same name cannot
-collide.
-
-Records are the read side of the system — `GET /videos/{id}/chunks` and
-`GET /videos/{id}/aggregates` both serve from them, so they cost nothing.
+`data/out/<video_id>/`: everything VIDRA produced for one video — media info, timeline,
+transcript, descriptions, embeddings and aggregates. It is also that video's search index.
+`GET /videos/{id}/chunks` and `GET /videos/{id}/aggregates` read straight from it, so they cost
+nothing.
 
 ## `detail`
 
@@ -88,12 +80,12 @@ How much of a search hit comes back: `minimal`, `standard` or `full`. See
 
 ## Application-side terms
 
-These exist in the frontend only; core has never heard of them.
+These exist in the frontend only; the backend has never heard of them.
 
 | Term | Meaning |
 |---|---|
 | **Project** | A workspace owning videos and conversations. Row in `projects`, scoped by RLS |
 | **Conversation** | One chat thread inside a project. Rows in `conversations` / `messages` |
-| **Video row** | A row in `video_core` — the application's view of a core video, plus ownership and ingest state |
+| **Video row** | A row in `video_core` — the application's view of a backend video, plus ownership and ingest state |
 | **Clip** | A `(video_id, url, start, end)` tuple. Not a stream of its own: the panel loads the mp4 once and seeks |
 | **Artifact panel** | The right-hand surface that renders clip reels and long documents |

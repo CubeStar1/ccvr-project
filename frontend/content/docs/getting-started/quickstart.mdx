@@ -1,69 +1,53 @@
 ---
 title: Quickstart
-description: Get core and the frontend running, ingest your first video, and ask a question about it.
+description: Get the backend and the frontend running, ingest your first video, and ask a question about it.
 ---
 
 import { Steps, Step } from 'fumadocs-ui/components/steps'
-import { Tabs, Tab } from 'fumadocs-ui/components/tabs'
 import { Callout } from 'fumadocs-ui/components/callout'
 
-This gets both services running on one machine. For the full explanation of every option, see
+This gets both servers running on one machine. For the full explanation of every option, see
 [Installation](/docs/getting-started/installation) and [Configuration](/docs/getting-started/configuration).
 
 ## Before you start
 
 | What | Why |
 |---|---|
-| Python 3.13 and a CUDA GPU | `core` runs Whisper, pyannote, YOLO, EasyOCR and CLIP locally. Developed on an RTX 4060 (8 GB) |
+| [uv](https://docs.astral.sh/uv/) | Installs Python 3.12 and the backend's dependencies |
+| ffmpeg | Audio and video decoding (`brew install ffmpeg` on macOS) |
 | Node 20+ | The Next.js frontend |
-| An OpenAI API key | Vision-language calls, answer synthesis, and the LLM-backed aggregators |
-| A Supabase project | Storage for video bytes, Postgres for projects/conversations/videos, and auth |
-| A Hugging Face token | Only for the `diarization` analyzer — its model is gated |
+| An OpenAI API key | Frame descriptions, embeddings, answers, and the written aggregates |
+| A Hugging Face token | Speaker diarization — its pyannote model is gated |
+| A Supabase project | Auth, and Postgres for projects, conversations and videos |
 
-<Callout type="warn">
-  Two Supabase projects are supported but not required. `core` writes video bytes to its own
-  bucket; the frontend keeps rows and uploaded originals in its own. Pointing both at the same
-  project is fine.
-</Callout>
+A GPU helps but is not required: Apple Silicon (`mps`), CUDA and CPU all work.
 
 <Steps>
 
 <Step>
 
-### Start core
+### Start the backend
 
 ```bash
-cd core
-
-pip install torch==2.11.0 torchvision==0.26.0 torchaudio==2.11.0 \
-    --index-url https://download.pytorch.org/whl/cu130
-pip install -r requirements.txt
+cd backend
+uv sync
 ```
 
-Create `core/.env`:
+Create `backend/.env`:
 
-```bash title="core/.env"
+```bash title="backend/.env"
 OPENAI_API_KEY=sk-...
-HF_TOKEN=hf_...                       # diarization only
-SUPABASE_URL=https://xxx.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=eyJ...
-```
-
-Create the public storage bucket once per project:
-
-```python
-from supabase import create_client
-create_client(URL, SERVICE_ROLE_KEY).storage.create_bucket("videos", options={"public": True})
+HF_TOKEN=hf_...
 ```
 
 Then run it:
 
 ```bash
-python serve.py               # http://127.0.0.1:8077
+uv run uvicorn app:app --port 8077
 ```
 
-Verify with `GET /health` — `status` is `ok` and `storage.ok` is `true` when the bucket is
-reachable. Interactive API docs live at `/docs`.
+Check `http://127.0.0.1:8077/health` — `status` is `ok` and `ffmpeg` is a path. Opening
+`http://127.0.0.1:8077/` redirects to the interactive API docs.
 
 </Step>
 
@@ -72,8 +56,8 @@ reachable. Interactive API docs live at `/docs`.
 ### Set up the database
 
 Run `frontend/lib/supabase/migrations/schema.sql` in the Supabase SQL editor. It creates
-`projects`, `conversations`, `messages`, `video_core` (the application's view of a video
-analysed by core), the `project-assets` bucket, and the RLS policies.
+`projects`, `conversations`, `messages`, `video_core` (the app's view of an analysed video), the
+`project-assets` bucket, and the RLS policies.
 
 Safe to re-run: everything is `IF NOT EXISTS` / `DROP … IF EXISTS`.
 
@@ -99,7 +83,7 @@ NEXT_PUBLIC_SUPABASE_ADMIN=eyJ...          # service-role key
 OPENAI_API_KEY=sk-...                      # plus any other provider you want in the model picker
 
 CORE_API_URL=http://127.0.0.1:8077
-CORE_API_TOKEN=                            # must match VIDEOMIND_API_TOKEN in core/.env
+CORE_API_TOKEN=                            # must match CORE_API_TOKEN in backend/.env, if set
 ```
 
 ```bash
@@ -108,7 +92,7 @@ npm run dev                                # http://localhost:3000
 
 <Callout type="info">
   Both servers have to be running. The frontend cannot ingest or retrieve on its own — every
-  video operation is a call into core.
+  video operation is a call into the backend.
 </Callout>
 
 </Step>
@@ -117,15 +101,16 @@ npm run dev                                # http://localhost:3000
 
 ### Create a project and upload a video
 
-Sign in, go to `/projects`, and create one. In the workspace, click **Upload** and either drop a
-file in or paste a direct video URL.
+Register, enter the code from the confirmation email, go to `/projects`, and create a project.
+In the workspace, click **Upload** and either drop a file in or paste a direct video URL.
 
 The upload dialog asks two things that matter:
 
 - **Which analyzers to run.** `default_video` (scene description) plus `diarization`
-  (speech with speakers) is a good default. See [Analyzers](/docs/concepts/analyzers).
-- **How to chunk.** Leave it on the `Audio + video` preset unless you know your footage is
-  carried by one signal. See [Chunking](/docs/concepts/chunking).
+  (speech with speakers) is a good default; add `ocr` for slides or screen recordings. See
+  [Analyzers](/docs/concepts/analyzers).
+- **How to chunk.** Leave it on the `Audio + video` preset. See
+  [Chunking](/docs/concepts/chunking).
 
 </Step>
 
@@ -134,10 +119,11 @@ The upload dialog asks two things that matter:
 ### Wait for indexing
 
 Each card shows a status pill moving through `Queued` → `Analyzing` → `Ready`. The grid polls,
-and each poll reconciles the row against core's job.
+and each poll reconciles the row against the backend's job.
 
-Indexing is genuinely slow — a five-minute video needs roughly 110 seconds for the boundary
-detectors alone, before a single vision call. Only `Ready` videos are searchable.
+Indexing takes minutes: a five-minute video with `default_video`, `diarization` and `ocr` took
+about five and a half minutes on an Apple Silicon laptop. The first run is slower, because it
+downloads the Whisper, pyannote and other model weights. Only `Ready` videos are searchable.
 
 </Step>
 
@@ -152,7 +138,7 @@ input.
 Try:
 
 - *"What happens in this video?"* — the agent calls `ask_video`
-- *"Find the moment where someone approaches the counter"* — `search_moments`
+- *"Find the moment where they explain headings"* — `search_moments`
 - *"Show me clips of that"* — `show_clips`, which opens the artifact panel
 
 Clips open in the right-hand panel: a player on top, the clip list below. Click any row to jump
@@ -165,5 +151,5 @@ to that moment; **Play all** plays them back to back.
 ## What next
 
 - [Concepts → The pipeline](/docs/concepts/pipeline) — what actually happens between upload and "Ready"
-- [Using FalconVQA → The agent](/docs/workspace/agent-chat) — the nine tools and when each is used
-- [API Reference](/docs/api) — drive core directly, without the frontend
+- [Using FalconVQA → The agent](/docs/workspace/agent-chat) — the tools and when each is used
+- [API Reference](/docs/api) — drive the backend directly, without the frontend

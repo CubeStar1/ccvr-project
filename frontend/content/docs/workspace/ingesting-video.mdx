@@ -13,44 +13,45 @@ and how it should be analysed.
 
 ### Sources
 
-- **Files** — dropped or picked, accepting `video/*`. Each file is uploaded to the project's
-  Supabase Storage bucket first; the resulting public URL is what core is handed.
-- **URLs** — any direct `http(s)` video URL. Nothing is copied on this path; core downloads it
-  itself.
+- **Files** — dropped or picked, accepting `video/*`. The browser asks `/api/uploads` for a
+  one-time upload URL issued by the backend, then sends the file straight there: Azure Blob
+  Storage in production, the backend itself in development. The backend is then handed
+  `upload:<upload_id>` to ingest.
+- **URLs** — any direct `http(s)` link to a video file. The backend downloads it itself. Links to
+  pages, such as YouTube, are not supported.
 
+Either way the backend keeps the one stored copy, and plays it back from `/media/<video_id>`.
 Several of each can be queued at once. Each source becomes its own job with its own progress row
 in the dialog.
 
-<Callout type="warn">
-  Supabase caps uploads at 50 MB by default. Raise the bucket limit, or add large videos by URL
-  instead — that path never pushes the bytes through the browser or through core's process.
-</Callout>
-
 ### Analyzers
 
-The list is built at runtime from `GET /api/core/capabilities`, which proxies core's `/analyzers`
-and `/schema`. It is not a hardcoded constant: adding an analyzer to core is meant to touch one
-module and one registry line, and a hardcoded list here would quietly make that "…and the
-frontend".
+The list is built at runtime from `GET /api/core/capabilities`, which proxies the backend's
+`/analyzers` and `/schema`. It is not a hardcoded constant, so an analyzer added to the backend
+appears here without a frontend change.
 
 Each option shows what it produces and whether it bills per chunk. `transcript` and `diarization`
 are mutually exclusive, and the dialog greys the second one out rather than letting the submit
 fail with a `400`.
 
-Default selection: `default_video` + `diarization`.
+Default selection: `default_video` + `diarization`. Add `ocr` for slides and screen recordings.
+See [Analyzers](/docs/concepts/analyzers).
 
 ### Chunking
 
-Three modes, matching core's:
+Three modes:
 
-| Mode | Control |
-|---|---|
-| **Preset** | `Audio + video`, `Audio-led` or `Video-led`, each labelled with what it suits |
-| **Custom weights** | Sliders for `speaker`, `silence`, `cut`, `semantic` |
-| **Fixed interval** | Seconds per chunk; min/max bounds do not apply |
+| Mode | Control | Becomes |
+|---|---|---|
+| **Preset** | `Audio + video`, `Audio-led` or `Video-led` | Scene cuts, or speech pauses for `Audio-led` |
+| **Custom weights** | Sliders for `speaker`, `silence`, `cut`, `semantic` | The policy for the heaviest-weighted signal |
+| **Fixed interval** | Seconds per chunk | Fixed 20-second chunks |
 
-Preset and weights modes also expose **shortest** and **longest** chunk. See
-[Chunking](/docs/concepts/chunking) for what these actually do.
+<Callout type="warn">
+  Chunks are always kept between 5 and 20 seconds, and fixed intervals are always 20 seconds. The
+  *shortest*, *longest* and *seconds per chunk* fields are saved but have no effect yet. See
+  [Chunking](/docs/concepts/chunking).
+</Callout>
 
 The chosen config is stored on the row as `ingest_config` and replayed verbatim on re-index.
 
@@ -61,32 +62,33 @@ The chosen config is stored on the row as `ingest_config` and replayed verbatim 
 <Step>
 ### The row is created first
 
-Before core has seen a byte. The video's core id is the hash of its contents, so it does not exist
-until the download finishes — everything identifying arrives later, through the job.
+Before the backend has seen a byte. The video's id is the hash of its contents, so it does not
+exist until the download finishes — everything identifying arrives later, through the job.
 </Step>
 
 <Step>
-### Core is handed the URL
+### The backend is handed the URL
 
 `POST /videos/url` returns `202` and a job id, which is written to the row along with
 `status: 'queued'`.
 
-If core is unreachable, the row is marked `failed` with the reason, and the API responds `502`.
-The video is still in the list, and **Re-index** is the way out.
+If the backend is unreachable, the row is marked `failed` with the reason, and the API responds
+`502`. The video is still in the list, and **Re-index** is the way out.
 </Step>
 
 <Step>
 ### Progress is reconciled on poll
 
-Each poll of `GET /api/videos?projectId=…` brings any in-flight row up to date with the core job
-it is waiting on, and persists what changed. Core's pipeline stages map onto the row's status:
+Each poll of `GET /api/videos?projectId=…` brings any in-flight row up to date with the job it is
+waiting on, and persists what changed. The row's status follows the job's status, and the job's
+`stage` is copied alongside it:
 
-| Core stage | Row status |
-|---|---|
-| `fetching`, `chunking`, `chunked` | `analyzing` |
-| `analyzing`, `indexing`, `aggregating` | `analyzing` |
-| `complete` | `ready` |
-| job failed | `failed` |
+| Job status | Row status | `stage` while there |
+|---|---|---|
+| `queued` | `queued` | `queued` |
+| `running` | `analyzing` | `fetching`, `transcribing`, `chunking`, `sampling`, `analyzing`, `indexing`, `aggregating` |
+| `done` | `ready` | `complete` |
+| `failed` | `failed` | wherever it stopped |
 </Step>
 
 <Step>
@@ -103,31 +105,25 @@ When the job finishes, the row gains `core_video_id`, `playback_url`, `poster_ur
 
 | Status | Meaning |
 |---|---|
-| `pending` | Row created, core not yet called |
-| `uploading` | The browser is still pushing bytes to Storage |
-| `queued` | Core accepted the job |
-| `analyzing` | Core is working — `stage` says which part |
+| `pending` | Row created, backend not yet called |
+| `uploading` | The browser is still sending the file |
+| `queued` | The backend accepted the job; it may be waiting behind another video |
+| `analyzing` | The backend is working — `stage` says which part |
 | `ready` | Searchable |
 | `failed` | `error` says why. Re-index to retry |
 
 ## Re-indexing
 
-Available from the card menu. There is no separate re-index call in core: ingest is idempotent on
-the content hash, so handing it the same source URL again re-analyses the same video in place.
-
-- **Same chunking** — analyzers that already ran keep their output; newly requested ones are
-  added.
-- **Different chunking** — chunks are replaced and the vectors describing the old ones are
-  dropped.
-
-Either way, aggregates recompute when the analyzer set changed.
+Available from the card menu. There is no separate re-index call in the backend: the row's
+source is handed over again and re-runs the pipeline into the same video, with whatever analyzers
+and chunking are now asked for. For an uploaded file the backend reuses its stored copy; for a URL
+it downloads again.
 
 ## Deleting
 
-Deleting a video removes its row. Core is only told to delete its copy once **nothing else
-references it**: the same file uploaded to two projects is one video in core, and destroying it
-because this row went away would silently destroy the other project's analysis.
+Deleting a video removes its row. The backend is only told to delete its copy once **nothing
+else references it**: the same file uploaded to two projects is one video in the backend, and
+destroying it because this row went away would destroy the other project's analysis.
 
-When core does delete, it drops the vectors, the record, the bucket objects and the cached file in
-one call. Partial deletion is worse than none — vectors without a record are uncitable, and an
-object without either is unreachable bytes nothing will ever collect.
+When the backend does delete, it removes the video file, its folder (and with it the search
+index), the poster and the ingest record in one call — locally and in blob storage.

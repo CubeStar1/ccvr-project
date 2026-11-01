@@ -9,6 +9,7 @@ dependencies = [
     "uvicorn[standard]",
     "python-multipart",
     "httpx",
+    "azure-storage-blob>=12.31.1",
 ]
 
 [tool.uv]

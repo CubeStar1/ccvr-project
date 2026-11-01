@@ -6,9 +6,9 @@ description: The patterns a production integration needs — scoping, reconcilia
 import { Callout } from 'fumadocs-ui/components/callout'
 import { Steps, Step } from 'fumadocs-ui/components/steps'
 
-Core is single-tenant, stateless about ownership, and asynchronous. Those three facts decide the
-shape of every client built on it. This page documents the patterns the reference frontend uses,
-and why.
+The backend is single-tenant, stateless about ownership, and asynchronous. Those three facts
+decide the shape of every client built on it. This page documents the patterns the reference
+frontend uses, and why.
 
 ## 1. Keep the client server-side
 
@@ -17,11 +17,11 @@ const CORE_URL = process.env.CORE_API_URL || 'http://127.0.0.1:8077'
 const CORE_TOKEN = process.env.CORE_API_TOKEN || ''
 ```
 
-Never import a core client into browser code. Core has no per-user auth, so every call must be
-made by something that has already checked ownership and resolved which video ids the caller may
-touch.
+Never import a backend client into browser code. The backend has no per-user auth, so every call
+must be made by something that has already checked ownership and resolved which video ids the
+caller may touch.
 
-Wrap failures so "core said no" and "core did not answer" stay distinguishable:
+Wrap failures so "the backend said no" and "the backend did not answer" stay distinguishable:
 
 ```ts
 export class CoreApiError extends Error {
@@ -29,16 +29,17 @@ export class CoreApiError extends Error {
 }
 ```
 
-A connection failure becomes a `503` naming the URL it tried; an HTTP error keeps core's own
-`detail`, which is written to be actionable.
+A connection failure becomes a `503` naming the URL it tried; an HTTP error keeps the backend's
+own `detail`, which is written to be actionable.
 
 ## 2. Own the identity mapping
 
-Core knows `video_id`. It does not know users, projects, titles or permissions. Keep a row per
-video with all of that, plus the ingest lifecycle.
+The backend knows `video_id`. It does not know users, projects, titles or permissions — and it
+has no endpoint that lists videos. Keep a row per video with all of that, plus the ingest
+lifecycle.
 
 ```sql
-core_video_id text NULL,           -- sha1(bytes)[:16], null until core has the bytes
+core_video_id text NULL,           -- sha256(bytes)[:16], null until the backend has the bytes
 status        text NOT NULL,       -- pending|uploading|queued|analyzing|ready|failed
 job_id        text NULL,
 stage         text NULL,
@@ -49,37 +50,37 @@ aggregates    text[] NOT NULL
 
 <Callout type="warn">
   `core_video_id` must be unique **per tenant**, never globally. The same file uploaded twice is
-  one video in core, so a global unique constraint would reject the second tenant's upload, and an
-  unconditional delete would destroy the first tenant's analysis.
+  one video in the backend, so a global unique constraint would reject the second tenant's
+  upload, and an unconditional delete would destroy the first tenant's analysis.
 </Callout>
 
 `analyzers` and `aggregates` are stored as arrays rather than JSON because the common query is a
-predicate: *does this video have `people`?*
+predicate: *does this video have `diarization`?*
 
-## 3. Create the row before core has the bytes
+## 3. Create the row before the backend has the bytes
 
 <Steps>
 
 <Step>
 ### Insert with `status: 'pending'`
 
-The video's core id is the hash of its contents, so it does not exist yet. Everything identifying
+The video's id is the hash of its contents, so it does not exist yet. Everything identifying
 arrives later, through the job.
 </Step>
 
 <Step>
 ### Call `POST /videos/url`, store the `job_id`
 
-Set `status: 'queued'`, `stage: 'fetching'`. If core is unreachable, mark the row `failed` with
-the reason — the row still exists, and re-index is the way out.
+Set `status: 'queued'`. If the backend is unreachable, mark the row `failed` with the reason — the
+row still exists, and re-index is the way out.
 </Step>
 
 <Step>
 ### Reconcile on read
 
-Core analyses on a background thread and pushes nothing, so the client's existing poll is where
-progress is discovered. One function turns a job into a row patch, used by both the list route and
-the single-video route so they cannot drift.
+The backend analyses on a background thread and pushes nothing, so the client's existing poll is
+where progress is discovered. One function turns a job into a row patch, used by both the list
+route and the single-video route so they cannot drift.
 </Step>
 
 <Step>
@@ -92,24 +93,28 @@ On `done`, copy `video_id`, `video_url`, `poster_url`, `duration`, `size_bytes`,
 </Steps>
 
 <Callout type="info">
-  Ingest jobs and aggregate re-runs share the job table. Distinguish them by the presence of
+  Ingest jobs and aggregate re-runs share the job store. Distinguish them by the presence of
   `video_url` in the result — writing ingest fields from an aggregate result would blank the
   playback URL with `undefined`.
 </Callout>
 
-## 4. Recover from a restarted core
+## 4. Recover from a restarted backend
 
-Jobs live in memory. A poll that 404s does not mean the ingest failed:
+Jobs are saved to disk, so a job that was running when the backend stopped comes back as
+`failed` — "the server restarted while this job ran" — and the normal failure path handles it.
+
+A poll that returns `404` means the job is unknown, for instance because `backend/data` was
+wiped. The reference client still handles that:
 
 ```
 job 404
  ├─ row has core_video_id, and GET /videos/{id} succeeds
- │    → the ingest finished before the restart. Complete the row from the video itself.
+ │    → the ingest finished. Complete the row from the video itself.
  └─ otherwise
       → genuinely lost. Fail the row with a message pointing at re-index.
 ```
 
-Without this, a restart mid-ingest leaves rows stuck on `analyzing` forever with no way out.
+Without this, a lost job would leave its row stuck on `analyzing` forever.
 
 ## 5. Scope every call explicitly
 
@@ -118,7 +123,7 @@ Without this, a restart mid-ingest leaves rows stuck on `analyzing` forever with
   multi-tenant deployment that is a data leak, not a convenience.
 </Callout>
 
-Put one resolver between your callers and core, and pass everything through it:
+Put one resolver between your callers and the backend, and pass everything through it:
 
 ```ts
 async function resolveScope(context, requested?: string[]) {
@@ -137,12 +142,7 @@ the model so it corrects itself.
 ## 6. Choose detail deliberately
 
 For a UI, `detail=standard`. For an agent, `detail=minimal` followed by
-`GET /videos/{id}/chunks?chunk_ids=…` on the few that matter — about 1.6k tokens against 19k for
-the same five moments at full detail.
-
-Do not expose core's `filters` to a language model. Every filter is a hard `AND` against exact
-stored labels, so it can only remove results, and models reliably send speculative ones that
-silently empty a good result set.
+`GET /videos/{id}/chunks?chunk_ids=…` on the few that matter.
 
 ## 7. Delete with a reference count
 
@@ -153,24 +153,24 @@ silently empty a good result set.
 
 ## The reference routes
 
-The frontend exposes these; each wraps core with an ownership check.
+The frontend exposes these; each wraps the backend with an ownership check.
 
 | Route | Wraps |
 |---|---|
 | `GET /api/videos?projectId=` | Lists rows, reconciling any in flight |
 | `POST /api/videos` | Registers a source and calls `POST /videos/url` |
 | `GET /api/videos/{id}` | Reconciles one row |
-| `DELETE /api/videos/{id}` | Deletes the row, and core's copy if unreferenced |
+| `DELETE /api/videos/{id}` | Deletes the row, and the backend's copy if unreferenced |
 | `POST /api/videos/{id}/reindex` | Replays `ingest_config`, or a supplied override |
 | `GET /api/videos/{id}/aggregates` | `GET /videos/{id}/aggregates` |
 | `POST /api/videos/{id}/aggregates` | `POST /videos/{id}/aggregates` |
-| `GET /api/videos/{id}/details` | Row + core metadata + every chunk + every aggregate |
-| `GET /api/videos/{id}/timeline` | Core's output flattened into scenes, transcript, chapters, events |
+| `GET /api/videos/{id}/details` | Row + backend metadata + every chunk + every aggregate |
+| `GET /api/videos/{id}/timeline` | The backend's output flattened into scenes, transcript, chapters, events |
 | `GET /api/core/capabilities` | `GET /analyzers` + `GET /schema`, cached 60s |
 | `POST /api/agent` | The streaming agent loop over the video tools |
 
 <Callout type="info">
   `GET /api/core/capabilities` exists so the upload dialog builds its analyzer list at runtime
-  rather than from a constant. Core's contract is that adding an analyzer touches one module and
-  one registry line — a hardcoded list in the client would quietly make that "…and the frontend".
+  rather than from a constant. An analyzer added to the backend shows up in the dialog without a
+  frontend change.
 </Callout>

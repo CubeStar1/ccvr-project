@@ -1,12 +1,12 @@
 ---
 title: The agent
-description: Nine tools, how the agent chooses between them, and the scoping that keeps one project's footage out of another's answers.
+description: Ten tools, how the agent chooses between them, and the scoping that keeps one project's footage out of another's answers.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout'
 
 The chat is a streaming multi-step tool loop built on the AI SDK. The model is given an inventory
-of the project's videos and nine tools, and runs up to 15 steps per turn — retrieving, reading,
+of the project's videos and ten tools, and runs up to 15 steps per turn — retrieving, reading,
 then answering.
 
 ## What the model is told
@@ -26,40 +26,37 @@ Videos tagged by the user for the current message are marked `TAGGED BY USER`; a
 
 | Tool | Use |
 |---|---|
-| `ask_video` | **The default.** "What / why / how / summarise / explain." Routes the question to whichever video-level results address it and returns a grounded answer with sources |
+| `ask_video` | **The default.** "What / why / how / summarise / explain." Answers from the most relevant moments plus each video's summary and chapters, with sources |
 | `search_moments` | "Find the part where… / when does… / show me…" — timestamped moments |
-| `get_video_insights` | Counts, structure and whole-video conclusions: how busy, what stands out, which brands, chapter breakdown, who talked most |
+| `get_video_insights` | Counts, structure and whole-video conclusions: length and talk time, chapter breakdown, events, names and brands, sentiment, who talked most |
 | `get_video_entities` | Who was in the video, what each person did, how long they were present |
 | `get_video_transcript` | Exact wording and quotes, optionally over a time range |
 | `read_chunks` | The full stored analysis for specific moments |
 | `list_project_videos` | Resolve a video named in words into its id, or check what it supports |
+| `add_video` | Add a video to the project from a direct link and start analysing it. Asks first; the video isn't searchable until it's `ready` |
 | `show_clips` | Open the artifact panel with a playable reel |
 | `show_artifact` | Long written output — a full summary, a written-up transcript. Not for clips |
 
 ### `ask_video`
 
-Wraps core's `POST /ask`. Returns the answer, the source moments, and `consulted` — which
-video-level results core routed to, per video. That last field is worth reporting: it explains why
-an answer knows something no single segment says.
+Wraps the backend's `POST /ask`. Returns the answer, the source moments, and `consulted` — which
+video-level results were read, per video. That last field is worth reporting: it explains why an
+answer knows something no single moment says.
 
 ### `search_moments`
 
-Wraps `POST /query`. One search tool where an earlier design had three.
+Wraps `POST /query`.
 
-Parameters: `query`, `video_ids`, `analyzer`, `field`, `limit`, `score_threshold`, `detail`.
-Synthesis is off — the chat message does the explaining, and a second model call here would pay
-for prose the agent is about to rewrite anyway.
+Parameters: `query`, `video_ids`, `analyzer`, `field`, `limit`, `score_threshold`, `detail`. The
+backend ignores `field` and `score_threshold`. Synthesis is off — the chat message does the
+explaining, and a second model call here would pay for prose the agent is about to rewrite anyway.
 
 <Callout type="warn">
-  **Core's `filters` dict is deliberately not exposed.** Every filter is a hard `AND` against exact
-  stored labels, so it can only ever remove results — and the model reliably sent speculative ones
-  ("white shirt" as an object, a people count on an analyzer that stores none), each of which
-  silently reduced a good result set to nothing. Prose in the tool description did not stop it. The
-  semantic query already covers what those filters were being used to express.
+  **Structured filters are deliberately not exposed** — and the backend no longer supports them.
+  Hard filters against exact stored labels can only ever remove results, and models reliably sent
+  speculative ones that silently emptied a good result set. The search query already covers what
+  those filters were being used to express.
 </Callout>
-
-The same reasoning applies to `score_threshold`, which is documented to the model as the one
-parameter that can empty a good result set: correct matches routinely score 0.55–0.60.
 
 ### `read_chunks`
 
@@ -82,7 +79,7 @@ result says where to resume from.
 ### `get_video_insights`
 
 Reads one aggregate by name, or lists what the video has when called without one — returning
-twelve full results would swamp the context for nothing.
+eleven full results would swamp the context for nothing.
 
 ### `get_video_entities`
 
@@ -92,11 +89,11 @@ value of this tool is the people who were *followed*.
 ## Scoping
 
 <Callout type="warn">
-  Core has no users, no projects and no row-level security: whoever can reach it can read every
-  video in it. Scoping is entirely the frontend's job.
+  The backend has no users, no projects and no row-level security: whoever can reach it can read
+  every video in it. Scoping is entirely the frontend's job.
 </Callout>
 
-Every tool except `show_clips` resolves the ids it may touch through a single choke point, which:
+Every video tool except `show_clips` resolves the ids it may touch through a single choke point, which:
 
 1. Requires a project on the conversation.
 2. Loads that project's `video_core` rows for that user — RLS applies.
@@ -104,8 +101,8 @@ Every tool except `show_clips` resolves the ids it may touch through a single ch
 4. Filters the model's requested ids against that set, and reports what it dropped.
 
 A model that hallucinates a video id, or repeats one it saw in another conversation, gets it
-filtered out here rather than answered from someone else's footage. Core is then always called
-with explicit ids.
+filtered out here rather than answered from someone else's footage. The backend is then always
+called with explicit ids.
 
 ## Rules the agent follows
 
@@ -130,6 +127,10 @@ The model picker sits above the input. Providers are OpenAI, Google, Groq, Cereb
 the list lives in `app/agent/lib/ai/models.ts` and any model whose provider key is set can be
 selected. LM Studio needs no key — it talks to a local server at `LMSTUDIO_BASE_URL`, so its
 models only work while that server is running with the model loaded.
+
+The chat model only runs the conversation. The video itself was understood at ingest by the
+backend's models, and the answers inside `ask_video` results are written by the backend's LLM —
+see [The pipeline](/docs/concepts/pipeline).
 
 ## Tagging videos
 

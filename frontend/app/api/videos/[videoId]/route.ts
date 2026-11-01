@@ -62,7 +62,9 @@ export async function DELETE(_request: Request, { params }: { params: Params }) 
     }
   }
 
-  if (video!.storage_path) {
+  // Only videos uploaded before the backend stored them have a copy in Supabase.
+  // A newer upload's source is `upload:<id>`, and the backend just deleted its file.
+  if (video!.source_type === 'upload' && video!.storage_path && !video!.source_url?.startsWith('upload:')) {
     await supabase!.storage.from('project-assets').remove([video!.storage_path])
   }
 

@@ -105,6 +105,16 @@ export interface CoreIngestResult {
   aggregated?: { ran?: string[]; reused?: string[]; aggregates?: string[]; error?: string }
 }
 
+/** A one-time upload URL from `POST /uploads`; ingest the file as `source` once it is sent. */
+export interface CoreUpload {
+  upload_id: string
+  source: string
+  method: 'PUT'
+  upload_url: string
+  headers: Record<string, string>
+  expires_at: string
+}
+
 export interface CoreVideo {
   video_id: string
   filename: string

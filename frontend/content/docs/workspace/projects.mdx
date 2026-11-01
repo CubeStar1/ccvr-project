@@ -37,8 +37,8 @@ filter that could be forgotten.
 
 Each card shows a status pill moving through `Pending` → `Queued` → `Analyzing` → `Ready`, or
 `Failed`. The grid polls while anything is in flight, and every poll reconciles the row against
-core's job — core analyses on a background thread and pushes nothing, so the client's existing
-poll is where progress is discovered.
+the backend's job — the backend analyses on a background thread and pushes nothing, so the
+client's existing poll is where progress is discovered.
 
 The card menu offers:
 
@@ -46,7 +46,7 @@ The card menu offers:
 |---|---|
 | **Open** | The video detail page — every chunk, every aggregate |
 | **Re-index** | Re-runs ingestion, optionally with a different config |
-| **Delete** | Removes the row, and core's copy if nothing else references it |
+| **Delete** | Removes the row, and the backend's copy if nothing else references it |
 
 ## Conversations
 

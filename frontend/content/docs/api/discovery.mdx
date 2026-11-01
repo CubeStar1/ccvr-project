@@ -14,61 +14,48 @@ Liveness, plus what this instance has loaded. Open — no token required.
 ```json
 {
   "status": "ok",
-  "ui": true,
-  "storage": { "ok": true, "bucket": "videos", "error": null },
-  "analyzers": ["default_video", "diarization", "object_detection", "ocr", "people", "transcript"],
-  "aggregators": ["chapters", "cooccurrence", "entities", "entity_timelines", "events",
-                  "ner", "novelty", "object_entities", "sentiment", "speaker_stats",
-                  "stats", "summary"]
+  "engine": "vidra 3.0.0",
+  "tier": "llm",
+  "data": "/path/to/backend/data",
+  "videos": 1,
+  "analyzers": ["default_video", "transcript", "diarization", "ocr", "people", "object_detection"],
+  "aggregators": ["chapters", "coverage", "entities", "events", "ner", "object_entities",
+                  "sentiment", "speaker_stats", "stats", "summary", "text_entities"],
+  "ffmpeg": "/opt/homebrew/bin/ffmpeg"
 }
 ```
 
 | Field | Meaning |
 |---|---|
-| `status` | `ok`, or `degraded` when Storage is unreachable |
-| `ui` | `false` when started with `--api-only` |
-| `storage` | Probe result: bucket name and the error, if any |
-| `analyzers` | Registered analyzer ids |
-| `aggregators` | Registered aggregator ids |
+| `status` | Always `ok` when the server answers |
+| `engine` | The VIDRA version |
+| `tier` | `VIDRA_TIER` — the costliest aggregates an ingest runs |
+| `data` | Where everything is written |
+| `videos` | How many videos are ingested |
+| `analyzers`, `aggregators` | What can be asked for |
+| `ffmpeg` | Path to ffmpeg, or `null` if it isn't installed |
 
 <Callout type="info">
-  Storage is **probed**, not assumed. A bad key or a missing bucket would otherwise first surface
-  as a failed ingest, minutes later, on a background thread, in a job nobody is watching. When
-  `status` is `degraded` the server still answers reads; ingest will fail.
+  `ffmpeg: null` means ingests will fail. Install it (`brew install ffmpeg` on macOS) and restart.
 </Callout>
 
 ---
 
 ## `GET /schema`
 
-What can be searched and filtered, in one call. Read this before constructing queries rather than
-guessing field names — this is the endpoint an agent should be pointed at.
+What the install supports, in one call.
 
 ```json
 {
-  "analyzers": ["default_video", "diarization", "object_detection", "ocr", "people", "transcript"],
+  "analyzers": ["default_video", "transcript", "diarization", "ocr", "people", "object_detection"],
   "exclusive_groups": [["diarization", "transcript"]],
-  "vector_fields": {
-    "combined": "whole flattened record (default)",
-    "description": "prose summary only",
-    "people": "person descriptions only",
-    "actions": "actions and what objects are used for",
-    "objects": "object names only"
-  },
-  "detail_levels": {
-    "minimal": "ids, timecodes, score, short snippet - for agents",
-    "standard": "plus description and facets - for the UI",
-    "full": "plus every nested record"
-  },
-  "filters": {
-    "video_ids": { "type": "list[str]", "matches": "any", "payload_field": "video_id" },
-    "min_people": { "type": "int", "matches": "gte", "payload_field": "people_count" }
-  },
   "aggregators": {
+    "stats": { "depends_on": [], "uses_llm": false },
+    "ner": { "depends_on": [], "uses_llm": false },
     "summary": { "depends_on": [], "uses_llm": true },
-    "entities": { "depends_on": ["people"], "uses_llm": true },
-    "entity_timelines": { "depends_on": ["entities"], "uses_llm": false }
-  }
+    "entities": { "depends_on": [], "uses_llm": true }
+  },
+  "filters": {}
 }
 ```
 
@@ -76,30 +63,34 @@ guessing field names — this is the endpoint an agent should be pointed at.
 |---|---|
 | `analyzers` | Which passes this install can run |
 | `exclusive_groups` | Sets that cannot be selected together, so a client can enforce it |
-| `vector_fields` | Valid values for `field` on `/query`, with what each embeds |
-| `detail_levels` | Valid values for `detail`, with what each returns |
-| `filters` | Every filter name, its type, its match kind (`any` / `exact` / `gte` / `lte`) and the payload field it maps to |
-| `aggregators` | Every aggregator with its dependencies and whether it bills API calls |
+| `aggregators` | Every aggregate, and whether it bills LLM calls |
+| `filters` | Always empty — this backend has no structured search filters |
 
-<Callout type="info">
-  Discovery matters more than raw generality for an agent. Given a free-form filter object it
-  would otherwise have to guess field names and semantics; given this, it can construct a valid
-  query on the first try.
-</Callout>
+`depends_on` is always empty here: which analyzer an aggregate needs is listed in
+[Aggregators](/docs/concepts/aggregators), and an aggregate whose analyzer is missing is skipped.
 
 ---
 
 ## `GET /analyzers`
 
-The subset of `/schema` a UI needs to populate dropdowns.
+What an upload form needs.
 
 ```json
 {
-  "analyzers": ["default_video", "diarization", "object_detection", "ocr", "people", "transcript"],
-  "fields": ["combined", "description", "people", "actions", "objects"],
-  "exclusive_groups": [["diarization", "transcript"]]
+  "analyzers": ["default_video", "transcript", "diarization", "ocr", "people", "object_detection"],
+  "fields": ["combined"],
+  "exclusive_groups": [["diarization", "transcript"]],
+  "descriptions": {
+    "default_video": "Describe each chunk's frames with the vision model",
+    "transcript": "Whisper transcript of the soundtrack",
+    "diarization": "Transcript with speaker turns (Whisper + pyannote)",
+    "ocr": "On-screen text, sampled where text appears",
+    "people": "People, sampled where YOLO sees them change",
+    "object_detection": "Objects, sampled where detections change"
+  }
 }
 ```
 
 `exclusive_groups` lists analyzer sets that cannot be selected together, so a client can grey the
-option out rather than discovering it as a `400` on submit.
+option out rather than discovering it as a `400` on submit. `fields` is kept for compatibility;
+`combined` is the only value.

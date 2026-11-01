@@ -1,0 +1,169 @@
+---
+title: Deployment
+description: Run FalconVQA in production — the frontend on Vercel, the backend on Azure Container Apps, its data in Azure Blob Storage, and Supabase for auth and rows.
+---
+
+import { Steps, Step } from 'fumadocs-ui/components/steps'
+import { Callout } from 'fumadocs-ui/components/callout'
+
+## The shape
+
+```
+browser ──► Vercel (Next.js)  ──► Supabase   auth · projects, conversations, messages, video_core
+   │              │
+   │              └── X-Core-Token ──► Azure Container App (backend, CPU)
+   │                                        │
+   └── upload (signed PUT) / playback ──► Azure Blob Storage   everything in backend/data
+```
+
+| Piece | Holds |
+|---|---|
+| **Vercel** | The Next.js app. Stateless |
+| **Supabase** | Users and the app's tables. No video files |
+| **Azure Container App** | The backend. Its disk is only a cache, so restarts lose nothing |
+| **Azure Blob Storage** | Everything the backend writes: each video file (once), its analysis, posters, jobs |
+
+Video bytes never pass through Vercel or Supabase. To upload, the frontend asks the backend for a
+one-time signed URL and the browser PUTs the file straight into Blob Storage. To play, the browser
+asks the backend for `/media/<id>`, which redirects to a short-lived signed read URL.
+
+<Steps>
+
+<Step>
+
+### Create the storage account
+
+One storage account for the backend alone — the backend sets its CORS rules on startup, replacing
+any others.
+
+```bash
+az storage account create -n videoragstore -g video-rag-rg -l <region> \
+  --sku Standard_LRS --kind StorageV2 --allow-blob-public-access false
+
+az storage account show-connection-string -n videoragstore -g video-rag-rg -o tsv
+```
+
+Keep the connection string for the next step. The container (`falconvqa` by default) is created
+on first use and stays private.
+
+</Step>
+
+<Step>
+
+### Configure the Container App
+
+The workflow updates the existing `video-rag-backend` app in `video-rag-rg`. Give it the secrets and
+settings once:
+
+```bash
+az containerapp secret set -n video-rag-backend -g video-rag-rg --secrets \
+  openai-key=<OPENAI_API_KEY> hf-token=<HF_TOKEN> core-token=<long random string> \
+  blob-conn="<connection string>"
+
+az containerapp update -n video-rag-backend -g video-rag-rg \
+  --cpu 4 --memory 8Gi --min-replicas 1 --max-replicas 1 \
+  --set-env-vars \
+    OPENAI_API_KEY=secretref:openai-key \
+    HF_TOKEN=secretref:hf-token \
+    CORE_API_TOKEN=secretref:core-token \
+    AZURE_STORAGE_CONNECTION_STRING=secretref:blob-conn \
+    BACKEND_PUBLIC_URL=https://<app>.<region>.azurecontainerapps.io \
+    FRONTEND_ORIGINS=https://<your-app>.vercel.app
+
+az containerapp ingress enable -n video-rag-backend -g video-rag-rg \
+  --type external --target-port 8077
+```
+
+Generate the token with `openssl rand -hex 32`.
+
+<Callout type="warn">
+  **Exactly one replica.** The ingest queue and in-flight jobs live in the process, so two
+  replicas would each run their own queue and answer polls for jobs they never saw. Keeping
+  `min-replicas` at 1 also avoids a cold start — loading the models — on the first request.
+</Callout>
+
+`BACKEND_PUBLIC_URL` is written into each video's playback and poster URLs, which the frontend
+stores on its rows. Set it to the app's final address before the first upload, and keep it.
+
+</Step>
+
+<Step>
+
+### Check the GitHub secrets
+
+`.github/workflows/deploy-backend.yml` builds `backend/Dockerfile`, pushes
+`thecubestar/video-rag-backend` to Docker Hub and points the app at the new image. It needs the
+same repository secrets the old `core/` workflow used:
+
+| Secret | For |
+|---|---|
+| `DOCKER_USERNAME`, `DOCKER_PASSWORD` | Pushing to Docker Hub |
+| `AZURE_CREDENTIALS` | `az login` as a service principal with access to `video-rag-rg` |
+
+It runs on every push to `main` that touches `backend/`, `vidra/` or the workflow, and can be run
+by hand from the Actions tab.
+
+</Step>
+
+<Step>
+
+### Deploy the frontend on Vercel
+
+Import the repository, set **Root Directory** to `frontend`, and add the environment variables:
+
+| Variable | Value |
+|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `NEXT_PUBLIC_SUPABASE_ADMIN` | From Supabase → Settings → API Keys |
+| `CORE_API_URL` | `https://<app>.<region>.azurecontainerapps.io` |
+| `CORE_API_TOKEN` | The same token as the backend's `core-token` secret |
+| `OPENAI_API_KEY`, and any other providers | For the chat model picker |
+| `NEXT_PUBLIC_APP_NAME`, `NEXT_PUBLIC_APP_ICON`, Resend keys | As in `.env.local` |
+
+If the Vercel domain differs from the `FRONTEND_ORIGINS` you set, update it on the Container App
+— uploads and playback are refused by CORS otherwise.
+
+</Step>
+
+<Step>
+
+### Point Supabase auth at the new domain
+
+In Supabase → Authentication → URL Configuration, set **Site URL** to the Vercel domain and add it
+under **Redirect URLs**. Sign-up confirmation links and OAuth sign-in redirect there.
+
+</Step>
+
+<Step>
+
+### Verify
+
+```bash
+curl https://<app>.<region>.azurecontainerapps.io/health
+```
+
+`storage` should read `azure:falconvqa` and `ffmpeg` should be a path. Then sign in on the Vercel
+domain, upload a short video, and watch it reach `Ready`. In the storage account, the
+`falconvqa` container now has `sources/`, `out/`, `videos/`, `posters/` and `jobs/`.
+
+</Step>
+
+</Steps>
+
+## What to expect
+
+- **Ingest is slower on CPU** than on a machine with a GPU or Apple Silicon. Whisper, pyannote and
+  the frame samplers all run on the container's 4 vCPUs. Measure with a typical video before
+  promising turnaround times.
+- **One video at a time.** Uploads during an ingest wait in `queued`.
+- **First run after a deploy** downloads pyannote (gated, so it is not baked into the image) and,
+  if used, the `object_detection` weights. Everything else is in the image.
+- **A restart mid-ingest** fails that job with "the server restarted while this job ran";
+  re-index it. Finished videos are in Blob Storage and come back on first use.
+
+## Costs to watch
+
+| Item | Driver |
+|---|---|
+| OpenAI | Vision calls per chunk, embeddings, and the `llm`-tier aggregates. Set `VIDRA_TIER=local` to drop the LLM aggregates |
+| Container App | 4 vCPU / 8 GiB running continuously |
+| Blob Storage | Roughly the size of the uploaded videos, plus about 1 MB of analysis per 5 minutes of video |

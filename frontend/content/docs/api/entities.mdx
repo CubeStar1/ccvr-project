@@ -8,7 +8,7 @@ import { Callout } from 'fumadocs-ui/components/callout'
 A moment can only say "a person in grey is at the counter". This endpoint is what connects those
 sightings into one person, across the whole video, with a written account of what they did.
 
-Requires the `people` analyzer and the `entities` aggregate.
+Requires the `people` analyzer and the `entities` aggregate (`VIDRA_TIER=llm`).
 
 ---
 
@@ -26,20 +26,23 @@ curl "http://127.0.0.1:8077/videos/6b9ca6e1a1b2c3d4/entities?min_appearances=2" 
 ```json
 {
   "video_id": "6b9ca6e1a1b2c3d4",
-  "total": 21,
+  "total": 1,
   "entities": [
     {
-      "entity_id": "6b9ca6e1-p003",
-      "appearances": 13,
-      "chunk_ids": [0, 1, 2, 3, 7, 8, 9, 12, 14, 15, 18, 20, 21],
+      "entity_id": "e000",
+      "label": "woman in a light grey T-shirt",
+      "name": "woman in a light grey T-shirt",
+      "appearances": 3,
+      "chunk_ids": [0, 4, 9],
       "first_seen": 0.0,
-      "last_seen": 233.4,
-      "description": "A woman in a light gray T-shirt with red lettering…",
-      "narrative": "She worked the right-side checkout register, scanning items…",
-      "timeline": {
-        "observed_seconds": 149.4,
-        "spans": [[0.0, 24.0], [140.0, 165.0]]
-      }
+      "last_seen": 141.2,
+      "observed_s": 41.5,
+      "narrative": "She works the right-hand register for most of the recording…",
+      "description": "She works the right-hand register for most of the recording…",
+      "account": { "text": "…", "narrative": "…" },
+      "doubts": [],
+      "mentions": [ "…each sighting: chunk_id, sampler_id, text, context" ],
+      "timeline": { "observed_seconds": 41.5, "spans": [[0.0, 13.8], [52.1, 66.0], [127.4, 141.2]] }
     }
   ]
 }
@@ -47,13 +50,15 @@ curl "http://127.0.0.1:8077/videos/6b9ca6e1a1b2c3d4/entities?min_appearances=2" 
 
 | Field | Meaning |
 |---|---|
-| `entity_id` | Stable within this video: `{video_id_prefix}-p{n}` |
+| `entity_id` | Stable within this video only |
+| `label` / `name` | Short identifying description |
 | `appearances` | How many chunks this person was seen in |
 | `chunk_ids` | Which ones — feed these to `GET /videos/{id}/chunks?chunk_ids=…` |
 | `first_seen`, `last_seen` | Seconds |
-| `description` | Their appearance, as the `people` analyzer described it |
-| `narrative` | What they did across the video, written after linking |
-| `timeline` | Merged from `entity_timelines` when it has run: total observed time and the spans |
+| `narrative` / `description` | What they did across the video, written after linking |
+| `doubts` | Anything the model wasn't sure was the same person |
+| `mentions` | Every sighting that was linked into this entity |
+| `timeline` | Total observed time and the chunk spans, for drawing presence on a timeline |
 
 <Callout type="info">
   Use `min_appearances=2`. Someone seen once is already fully described by their chunk; the value
@@ -62,35 +67,22 @@ curl "http://127.0.0.1:8077/videos/6b9ca6e1a1b2c3d4/entities?min_appearances=2" 
 
 ## How linking works
 
-Embeddings are clustered **under constraints**, and only then is an LLM asked to write narratives.
+Every sighting from the vision model's chunk descriptions is embedded. Sightings are linked into
+one entity when their embeddings match closely enough — the threshold is calibrated per video —
+and only then does the LLM write the account of each entity.
 
-- People co-visible in one chunk cannot be the same person.
-- Descriptions too generic to identify anyone are left unlinked rather than merged.
-- The signature is `clothing` **only**. Blending in `appearance` dragged same-person scores to
-  0.69–0.87, because appearance drifts and sometimes contains meta-commentary ("same woman as box
-  3") that the embedding treats as content.
-
-Asked to match people directly, an LLM confidently merges anyone in dark clothing. The clustering
-step is what prevents that.
+The same method produces `object_entities` (from `object_detection`) and `text_entities` (from
+`ocr` — titles, URLs, labels that recur on screen). Read those through
+[`GET /videos/{id}/aggregates`](/docs/api/aggregates); they carry the same fields.
 
 <Callout type="warn">
   **Cross-video entity linking is not built.** Entity ids are meaningful within one video only.
   Two videos of the same person produce two unrelated ids.
 </Callout>
 
-## Related aggregates
-
-| Aggregate | Adds |
-|---|---|
-| `entity_timelines` | Presence and dwell time per person; merged into this response when present |
-| `cooccurrence` | Which people appear together, which objects appear with them, people per chunk |
-| `object_entities` | The same clustering applied to objects, with static fixtures set aside |
-
-Read those through [`GET /videos/{id}/aggregates`](/docs/api/aggregates).
-
 ## Errors
 
 | Code | Cause |
 |---|---|
-| `400` | The video has no `entities` aggregate — it was analysed without the `people` analyzer. The message lists what it does have |
+| `400` | The video has no `entities` aggregate — it was analysed without `people`, or below the `llm` tier. The message lists what it does have |
 | `404` | Unknown video |

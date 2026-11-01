@@ -5,11 +5,11 @@
 ![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js&logoColor=white)
 ![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
 ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
-![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 ![PyTorch](https://img.shields.io/badge/PyTorch-EE4C2C?logo=pytorch&logoColor=white)
-![Qdrant](https://img.shields.io/badge/Qdrant-DC244C?logo=qdrant&logoColor=white)
 ![Supabase](https://img.shields.io/badge/Supabase-3FCF8E?logo=supabase&logoColor=white)
+![Azure](https://img.shields.io/badge/Azure-0078D4?logo=microsoftazure&logoColor=white)
 
 Ask questions about your videos and get answers grounded in what was actually said and shown,
 with timestamps and playable clips.
@@ -26,14 +26,14 @@ with timestamps and playable clips.
 
 ```
 Next.js  ──►  /api/agent (AI SDK tools)  ──►  backend (FastAPI)  ──►  vidra  ──►  backend/data/
-   │
-   ├──► Supabase Storage (uploads → public URL, handed to the backend)
-   └──► Supabase DB (projects, conversations, messages, video_core)
+   │                                              ▲                         (Azure Blob in production)
+   ├──► Supabase (auth, projects, conversations, messages, video_core)
+   └──► uploads: one-time URL from the backend, file sent straight to its storage
 ```
 
 Frame descriptions, embeddings, summaries and answers use OpenAI. Whisper, pyannote and the
-YOLO/CLIP samplers run locally (CUDA, Apple `mps`, or CPU). The search index is a folder per
-video under `backend/data/out/`.
+YOLO/CLIP samplers run locally (CUDA, Apple `mps`, or CPU). Video files and the search index (a
+folder per video) live in `backend/data/`, mirrored to Azure Blob Storage when deployed.
 
 ---
 
@@ -64,7 +64,8 @@ API docs: http://127.0.0.1:8077/docs.
 
 Optional environment: `VIDRA_TIER` (`free` | `local` | `llm`, default `llm`) caps which
 aggregators an ingest runs; `BACKEND_DATA` moves the data folder; `CORE_API_TOKEN` requires
-an `X-Core-Token` header matching the frontend's.
+an `X-Core-Token` header matching the frontend's; `AZURE_STORAGE_CONNECTION_STRING` mirrors
+the data folder to Azure Blob Storage.
 
 ## 3. Database
 
@@ -84,13 +85,19 @@ Runs on http://localhost:3000. At minimum `.env.local` needs the three Supabase 
 model provider key, and `CORE_API_URL` — which defaults to `http://127.0.0.1:8077`
 Both servers need to be running: the frontend alone cannot ingest or retrieve.
 
+## 5. Deploying
+
+The frontend goes on Vercel; the backend on Azure Container Apps, built and deployed by
+`.github/workflows/deploy-backend.yml` from `backend/Dockerfile`, with its data in Azure Blob
+Storage. Step by step: `/docs/getting-started/deployment`.
+
 ---
 
 ## Using it
 
 1. **Create a project** at `/projects` → "New Project". You land on the project workspace.
 2. **Upload videos** — Upload using the upload videos button. Drop files in, or paste direct video URLs. Files go
-   to Supabase Storage and the backend is handed the public URL; URLs it downloads itself. Pick
+   straight to the backend's storage through a one-time upload URL; URLs it downloads itself. Pick
    the analyzers and the chunking mode in the same dialog — the analyzer list is fetched from
    the backend, not hardcoded.
 3. **Wait for analysis.** Each card shows `queued` → `analyzing` (with the current stage) →
