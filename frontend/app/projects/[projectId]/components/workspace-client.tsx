@@ -3,7 +3,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { ArrowUp, Loader2, PanelLeft, Plus } from 'lucide-react'
+import { ArrowUp, Clock, Film, Loader2, PanelLeft, Plus } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -14,11 +14,11 @@ import { VideoPlayer } from '@/app/agent/components/video-player'
 import { VideoPicker, VideoChips } from '@/app/agent/components/video-picker'
 import { VoiceInputButton } from '@/app/agent/components/voice-input-button'
 import { useProjectVideos, useVideoMutations } from '@/hooks/use-project-videos'
-import { formatDuration } from '@/lib/core/format'
+import { formatDuration, formatTimestamp } from '@/lib/core/format'
 import type { Project } from '@/app/agent/types'
 import type { ProjectVideo } from '@/lib/core/types'
 import { MediaGrid } from './media-grid'
-import { PromptSuggestions } from './prompt-suggestions'
+import { PromptSuggestions, type Suggestion } from './prompt-suggestions'
 import { UploadDialog } from './upload-dialog'
 
 interface WorkspaceClientProps {
@@ -37,22 +37,48 @@ export function WorkspaceClient({ project, initialVideos }: WorkspaceClientProps
   const promptRef = useRef<HTMLTextAreaElement>(null)
 
   const { videos, readyVideos, isLoading } = useProjectVideos(project.id, initialVideos)
-  const { remove, reindex, invalidate } = useVideoMutations(project.id)
+  const { remove, reindex, rename, invalidate } = useVideoMutations(project.id)
 
   /** How much footage is actually searchable — the only number worth surfacing up top. */
-  const indexedHours = useMemo(
-    () => readyVideos.reduce((total, video) => total + (video.duration ?? 0), 0) / 3600,
+  const indexedSeconds = useMemo(
+    () => readyVideos.reduce((total, video) => total + (video.duration ?? 0), 0),
     [readyVideos]
   )
 
-  /** Suggestions seed the box and hand the caret over — the user still hits send. */
-  const fillPrompt = useCallback((suggestion: string) => {
-    setPrompt(suggestion)
-    const input = promptRef.current
-    if (!input) return
-    input.focus()
-    input.setSelectionRange(suggestion.length, suggestion.length)
-  }, [])
+  const indexingCount =
+    videos.length - readyVideos.length - videos.filter((v) => v.status === 'failed').length
+
+  /** Suggestions follow the scope: the tagged videos, or the whole library when none are. */
+  const suggestionScope = useMemo(() => {
+    const tagged = readyVideos.filter((video) =>
+      selectedVideoIds.includes(video.core_video_id as string)
+    )
+    return tagged.length > 0 ? tagged : readyVideos
+  }, [readyVideos, selectedVideoIds])
+
+  /**
+   * Suggestions seed the box and hand the caret over — the user still hits send.
+   * One that names a video also scopes the chat to it, so the agent searches the
+   * right footage; the chip it adds can be removed like any other.
+   */
+  const pickSuggestion = useCallback(
+    (suggestion: Suggestion) => {
+      setPrompt(suggestion.text)
+      // Prompts say "the video", so the chat must be scoped to exactly the
+      // videos the suggestion is about. Covering the whole library needs no tag.
+      const scope = readyVideos
+        .filter((item) => suggestion.videoIds.includes(item.id) && item.core_video_id)
+        .map((item) => item.core_video_id as string)
+      if (scope.length > 0 && scope.length < readyVideos.length) {
+        setSelectedVideoIds(scope)
+      }
+      const input = promptRef.current
+      if (!input) return
+      input.focus()
+      input.setSelectionRange(suggestion.text.length, suggestion.text.length)
+    },
+    [readyVideos]
+  )
 
   /** Dictation adds to whatever is already typed, then hands the caret back. */
   const appendTranscript = useCallback(
@@ -71,9 +97,7 @@ export function WorkspaceClient({ project, initialVideos }: WorkspaceClientProps
 
   const toggleVideo = useCallback((videoId: string) => {
     setSelectedVideoIds((current) =>
-      current.includes(videoId)
-        ? current.filter((item) => item !== videoId)
-        : [...current, videoId]
+      current.includes(videoId) ? current.filter((item) => item !== videoId) : [...current, videoId]
     )
   }, [])
 
@@ -132,16 +156,24 @@ export function WorkspaceClient({ project, initialVideos }: WorkspaceClientProps
         </div>
       </header>
 
-      <div className="mx-auto max-w-5xl px-6 pb-20 pt-16">
+      <div className="mx-auto max-w-5xl px-4 pb-20 pt-14 sm:px-6 sm:pt-20">
         <div className="mx-auto max-w-2xl text-center">
-          <h1 className="text-balance text-3xl font-semibold tracking-tight">{project.name}</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            {project.description || summarizeLibrary(readyVideos.length, indexedHours)}
-          </p>
+          <h1 className="text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
+            {project.name}
+          </h1>
+          {project.description && (
+            <p className="mt-2 text-sm text-muted-foreground">{project.description}</p>
+          )}
+          <LibraryStats
+            videos={readyVideos}
+            seconds={indexedSeconds}
+            processing={indexingCount}
+            onUpload={() => setUploadOpen(true)}
+          />
         </div>
 
         {/* Prompt launcher */}
-        <div className="mx-auto mt-8 max-w-2xl rounded-2xl border bg-card p-2.5 shadow-sm transition-colors focus-within:border-foreground/20">
+        <div className="mx-auto mt-8 max-w-2xl rounded-2xl border bg-card p-2.5 shadow-sm transition-[border-color,box-shadow] focus-within:border-foreground/20 focus-within:shadow-md">
           <div className="-mx-2.5 -mt-2.5 mb-1">
             <VideoChips videos={videos} selectedIds={selectedVideoIds} onRemove={toggleVideo} />
           </div>
@@ -155,8 +187,12 @@ export function WorkspaceClient({ project, initialVideos }: WorkspaceClientProps
                 void startChat(prompt)
               }
             }}
-            placeholder="Describe a moment, ask a question, or request a clip"
-            className="min-h-13 resize-none border-0 bg-transparent p-2 shadow-none focus-visible:ring-0 dark:bg-transparent"
+            placeholder={
+              readyVideos.length > 0
+                ? 'Describe a moment, ask a question, or request a clip'
+                : 'Add a video to start asking questions'
+            }
+            className="min-h-16 resize-none border-0 bg-transparent p-2 text-[15px] shadow-none focus-visible:ring-0 dark:bg-transparent"
           />
           <div className="flex items-center justify-between gap-2 px-1">
             <div className="flex items-center gap-1">
@@ -177,10 +213,14 @@ export function WorkspaceClient({ project, initialVideos }: WorkspaceClientProps
               />
               <VoiceInputButton onTranscript={appendTranscript} disabled={isStarting} />
             </div>
-            <div className="flex items-center gap-2">
-              {selectedVideoIds.length === 0 && readyVideos.length > 0 && (
-                <span className="text-xs text-muted-foreground">
-                  searching all {readyVideos.length}
+            <div className="flex items-center gap-2.5">
+              {readyVideos.length > 0 && (
+                <span className="hidden text-xs text-muted-foreground sm:inline">
+                  {selectedVideoIds.length > 0
+                    ? `${selectedVideoIds.length} of ${readyVideos.length} tagged`
+                    : readyVideos.length === 1
+                      ? '1 video'
+                      : `All ${readyVideos.length} videos`}
                 </span>
               )}
               <Button
@@ -188,6 +228,7 @@ export function WorkspaceClient({ project, initialVideos }: WorkspaceClientProps
                 className="size-8 rounded-full"
                 disabled={!prompt.trim() || isStarting}
                 onClick={() => void startChat(prompt)}
+                title="Start chat"
               >
                 {isStarting ? (
                   <Loader2 className="size-4 animate-spin" />
@@ -199,8 +240,12 @@ export function WorkspaceClient({ project, initialVideos }: WorkspaceClientProps
           </div>
         </div>
 
-        <div className="mx-auto mt-5 max-w-3xl">
-          <PromptSuggestions onSelect={fillPrompt} />
+        <div className="mx-auto mt-6 max-w-2xl">
+          <PromptSuggestions
+            videos={suggestionScope}
+            libraryCount={readyVideos.length}
+            onSelect={pickSuggestion}
+          />
         </div>
 
         <MediaGrid
@@ -208,6 +253,15 @@ export function WorkspaceClient({ project, initialVideos }: WorkspaceClientProps
           projectId={project.id}
           isLoading={isLoading}
           onPreview={setPreview}
+          onRename={(videoId, title) =>
+            rename.mutate(
+              { videoId, title },
+              {
+                onError: (error: any) =>
+                  toast.error('Could not rename video', { description: error.message }),
+              }
+            )
+          }
           onUpload={() => setUploadOpen(true)}
           onDelete={(videoId) =>
             remove.mutate(videoId, {
@@ -258,13 +312,82 @@ export function WorkspaceClient({ project, initialVideos }: WorkspaceClientProps
   )
 }
 
-/** Stands in for the project description: what's actually searchable right now. */
-function summarizeLibrary(readyCount: number, hours: number): string {
-  if (readyCount === 0) return 'Add a video to start asking questions about it.'
+/**
+ * What the project holds, as one segmented pill: a peek at the footage, how
+ * much of it there is, and anything still being processed.
+ */
+function LibraryStats({
+  videos,
+  seconds,
+  processing,
+  onUpload,
+}: {
+  videos: ProjectVideo[]
+  seconds: number
+  processing: number
+  onUpload: () => void
+}) {
+  if (videos.length === 0 && processing === 0) {
+    return (
+      <button
+        type="button"
+        onClick={onUpload}
+        className="mt-4 inline-flex items-center gap-2 rounded-full border border-dashed px-3.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-foreground/30 hover:text-foreground"
+      >
+        <Film className="size-3.5" />
+        No videos yet — add one to start
+      </button>
+    )
+  }
 
-  const label = `${readyCount} video${readyCount === 1 ? '' : 's'} indexed`
-  if (hours < 0.02) return label
+  const posters = videos.filter((video) => video.poster_url).slice(0, 3)
 
-  const length = hours < 1 ? `${Math.round(hours * 60)} min` : `${hours.toFixed(1)} h`
-  return `${label} · ${length} of video`
+  return (
+    <div className="mt-4 inline-flex items-stretch divide-x overflow-hidden rounded-full border bg-card/60 text-xs shadow-xs">
+      {videos.length > 0 && (
+        <div className="flex items-center gap-2.5 py-1 pl-1.5 pr-3.5">
+          {posters.length > 0 ? (
+            <span className="flex -space-x-2.5">
+              {posters.map((video, index) => (
+                // eslint-disable-next-line @next/next/no-img-element -- posters live in core's bucket
+                <img
+                  key={video.id}
+                  src={video.poster_url as string}
+                  alt=""
+                  style={{ zIndex: posters.length - index }}
+                  className="relative h-6 w-10 rounded-full border-2 border-card object-cover"
+                />
+              ))}
+            </span>
+          ) : (
+            <span className="flex size-6 items-center justify-center rounded-full bg-muted">
+              <Film className="size-3 text-muted-foreground" />
+            </span>
+          )}
+          <span className="text-muted-foreground">
+            <span className="font-medium tabular-nums text-foreground">{videos.length}</span>{' '}
+            {videos.length === 1 ? 'video' : 'videos'}
+          </span>
+        </div>
+      )}
+
+      {seconds >= 1 && (
+        <div className="flex items-center gap-1.5 px-3.5 text-muted-foreground">
+          <Clock className="size-3.5" />
+          <span className="font-medium tabular-nums text-foreground">
+            {formatTimestamp(seconds)}
+          </span>
+          <span className="hidden sm:inline">of footage</span>
+        </div>
+      )}
+
+      {processing > 0 && (
+        <div className="flex items-center gap-1.5 px-3.5 text-muted-foreground">
+          <Loader2 className="size-3.5 animate-spin" />
+          <span className="font-medium tabular-nums text-foreground">{processing}</span>
+          processing
+        </div>
+      )}
+    </div>
+  )
 }

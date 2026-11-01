@@ -36,8 +36,7 @@ export function useProjectVideos(projectId: string, initialVideos?: ProjectVideo
 
 export function useVideoMutations(projectId: string) {
   const queryClient = useQueryClient()
-  const invalidate = () =>
-    queryClient.invalidateQueries({ queryKey: projectVideosKey(projectId) })
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: projectVideosKey(projectId) })
 
   const remove = useMutation({
     mutationFn: async (videoId: string) => {
@@ -61,13 +60,7 @@ export function useVideoMutations(projectId: string) {
    * though five of them do bill LLM calls.
    */
   const reaggregate = useMutation({
-    mutationFn: async ({
-      videoId,
-      aggregators,
-    }: {
-      videoId: string
-      aggregators?: string[]
-    }) => {
+    mutationFn: async ({ videoId, aggregators }: { videoId: string; aggregators?: string[] }) => {
       const response = await fetch(`/api/videos/${videoId}/aggregates`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -78,5 +71,39 @@ export function useVideoMutations(projectId: string) {
     onSuccess: invalidate,
   })
 
-  return { remove, reindex, reaggregate, invalidate }
+  /**
+   * Rename optimistically — the card shows the new title at once and rolls back
+   * if the server refuses it.
+   */
+  const rename = useMutation({
+    mutationFn: async ({ videoId, title }: { videoId: string; title: string }) => {
+      const response = await fetch(`/api/videos/${videoId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title }),
+      })
+      if (!response.ok) throw new Error(await response.text())
+      const { video } = await response.json()
+      return video as ProjectVideo
+    },
+    onMutate: async ({ videoId, title }) => {
+      const key = projectVideosKey(projectId)
+      await queryClient.cancelQueries({ queryKey: key })
+      const previous = queryClient.getQueryData<ProjectVideo[]>(key)
+      queryClient.setQueryData<ProjectVideo[]>(key, (videos) =>
+        videos?.map((video) => (video.id === videoId ? { ...video, title } : video))
+      )
+      return { previous }
+    },
+    onError: (_error, _vars, context) => {
+      if (context?.previous) queryClient.setQueryData(projectVideosKey(projectId), context.previous)
+    },
+    onSettled: (_data, _error, { videoId }) => {
+      invalidate()
+      // The analysis page caches its own copy of the row.
+      queryClient.invalidateQueries({ queryKey: ['video-details', videoId] })
+    },
+  })
+
+  return { remove, reindex, reaggregate, rename, invalidate }
 }

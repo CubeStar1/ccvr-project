@@ -7,6 +7,8 @@ import { Input } from '@/components/ui/input'
 import { VideoCard } from './video-card'
 import type { ProjectVideo } from '@/lib/core/types'
 
+const SEARCH_THRESHOLD = 6
+
 interface MediaGridProps {
   videos: ProjectVideo[]
   projectId: string
@@ -14,6 +16,7 @@ interface MediaGridProps {
   onDelete: (videoId: string) => void
   onReindex: (videoId: string) => void
   onPreview: (video: ProjectVideo) => void
+  onRename: (videoId: string, title: string) => void
   onUpload: () => void
 }
 
@@ -24,6 +27,7 @@ export function MediaGrid({
   onDelete,
   onReindex,
   onPreview,
+  onRename,
   onUpload,
 }: MediaGridProps) {
   const [search, setSearch] = useState('')
@@ -35,7 +39,7 @@ export function MediaGrid({
 
   return (
     <section className="mt-12">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
+      <div className="flex min-h-9 flex-wrap items-center justify-between gap-3">
         <h2 className="flex items-baseline gap-2 text-sm font-medium">
           Videos
           {videos.length > 0 && (
@@ -43,20 +47,23 @@ export function MediaGrid({
           )}
         </h2>
 
-        <div className="relative w-full sm:w-64">
-          <Search className="absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search files by title"
-            className="h-9 pl-9 text-sm"
-          />
-        </div>
+        {/* Searching titles only earns its space once the grid stops fitting at a glance. */}
+        {videos.length > SEARCH_THRESHOLD && (
+          <div className="relative w-full sm:w-56">
+            <Search className="absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search files by title"
+              className="h-8 pl-9 text-sm"
+            />
+          </div>
+        )}
       </div>
 
-      <div className="pt-6">
+      <div className="pt-4">
         {isLoading && videos.length === 0 ? (
-          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {Array.from({ length: 4 }).map((_, index) => (
               <div key={index} className="space-y-2">
                 <div className="aspect-video animate-pulse rounded-xl bg-muted" />
@@ -87,7 +94,7 @@ export function MediaGrid({
             )}
           </div>
         ) : (
-          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {filtered.map((video) => (
               <VideoCard
                 key={video.id}
@@ -96,6 +103,7 @@ export function MediaGrid({
                 onDelete={onDelete}
                 onReindex={onReindex}
                 onPreview={onPreview}
+                onRename={onRename}
               />
             ))}
           </div>

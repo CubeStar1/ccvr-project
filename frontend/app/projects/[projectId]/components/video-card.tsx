@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import {
   AlertTriangle,
@@ -8,6 +8,7 @@ import {
   Film,
   Loader2,
   MoreHorizontal,
+  Pencil,
   PlayCircle,
   RefreshCw,
   ScrollText,
@@ -30,6 +31,57 @@ interface VideoCardProps {
   onDelete: (videoId: string) => void
   onReindex: (videoId: string) => void
   onPreview: (video: ProjectVideo) => void
+  onRename: (videoId: string, title: string) => void
+}
+
+/** The title, swapped for an input while renaming. Enter or blur saves, Escape cancels. */
+function TitleEditor({
+  title,
+  onSave,
+  onCancel,
+}: {
+  title: string
+  onSave: (title: string) => void
+  onCancel: () => void
+}) {
+  const [value, setValue] = useState(title)
+  const inputRef = useRef<HTMLInputElement>(null)
+  // Blur fires after Enter/Escape unmount the input; this keeps it from saving twice.
+  const done = useRef(false)
+
+  useEffect(() => {
+    inputRef.current?.focus()
+    inputRef.current?.select()
+  }, [])
+
+  const finish = (save: boolean) => {
+    if (done.current) return
+    done.current = true
+    const next = value.replace(/\s+/g, ' ').trim()
+    if (save && next && next !== title) onSave(next)
+    else onCancel()
+  }
+
+  return (
+    <input
+      ref={inputRef}
+      value={value}
+      maxLength={200}
+      aria-label="Video title"
+      onChange={(event) => setValue(event.target.value)}
+      onBlur={() => finish(true)}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault()
+          finish(true)
+        } else if (event.key === 'Escape') {
+          event.preventDefault()
+          finish(false)
+        }
+      }}
+      className="-mx-1.5 -my-0.5 w-[calc(100%+0.75rem)] rounded-md border bg-background px-1.5 py-0.5 text-sm font-medium outline-none focus:border-foreground/30 focus:ring-2 focus:ring-ring/30"
+    />
+  )
 }
 
 function StatusPill({ video }: { video: ProjectVideo }) {
@@ -87,8 +139,12 @@ export function VideoCard({
   onDelete,
   onReindex,
   onPreview,
+  onRename,
 }: VideoCardProps) {
   const [imageFailed, setImageFailed] = useState(false)
+  const [isRenaming, setIsRenaming] = useState(false)
+  // Set when Rename is picked, so the closing menu doesn't pull focus off the new input.
+  const renameRequested = useRef(false)
   const isReady = video.status === 'ready'
   // Absent while a video is still queued — show nothing rather than implying a
   // config we can't vouch for.
@@ -105,7 +161,7 @@ export function VideoCard({
         href={href}
         className={cn(
           'relative aspect-video w-full overflow-hidden rounded-xl border bg-muted transition-all',
-          'hover:border-primary/40 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+          'hover:border-foreground/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
         )}
       >
         {video.poster_url && !imageFailed ? (
@@ -117,7 +173,7 @@ export function VideoCard({
             onError={() => setImageFailed(true)}
           />
         ) : (
-          <div className="flex size-full items-center justify-center bg-gradient-to-br from-muted to-muted/40">
+          <div className="flex size-full items-center justify-center bg-muted">
             <Film className="size-8 text-muted-foreground/50" />
           </div>
         )}
@@ -133,17 +189,35 @@ export function VideoCard({
 
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
-          <Link
-            href={href}
-            className="block truncate text-sm font-medium hover:underline"
-            title={video.title}
-          >
-            {video.title}
-          </Link>
-          <div className="mt-1">
-            <StatusPill video={video} />
-          </div>
-          {chunking && (
+          {isRenaming ? (
+            <TitleEditor
+              title={video.title}
+              onCancel={() => setIsRenaming(false)}
+              onSave={(title) => {
+                setIsRenaming(false)
+                onRename(video.id, title)
+              }}
+            />
+          ) : (
+            <Link
+              href={href}
+              className="block truncate text-sm font-medium hover:underline"
+              title={video.title}
+              onDoubleClick={(event) => {
+                event.preventDefault()
+                setIsRenaming(true)
+              }}
+            >
+              {video.title}
+            </Link>
+          )}
+          {/* Ready is the normal case; only call out a video that is not. */}
+          {!isReady && (
+            <div className="mt-1">
+              <StatusPill video={video} />
+            </div>
+          )}
+          {isReady && chunking && (
             <p className="mt-1 truncate text-[11px] text-muted-foreground/70">
               {describeChunking(chunking)}
             </p>
@@ -154,12 +228,29 @@ export function VideoCard({
           <DropdownMenuTrigger className="rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground group-hover:opacity-100 data-[state=open]:opacity-100">
             <MoreHorizontal className="size-4" />
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
+          <DropdownMenuContent
+            align="end"
+            onCloseAutoFocus={(event) => {
+              if (renameRequested.current) {
+                event.preventDefault()
+                renameRequested.current = false
+              }
+            }}
+          >
             <DropdownMenuItem asChild>
               <Link href={href}>
                 <ScrollText className="size-4" />
                 View analysis
               </Link>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={() => {
+                renameRequested.current = true
+                setIsRenaming(true)
+              }}
+            >
+              <Pencil className="size-4" />
+              Rename
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => onPreview(video)}>
               <PlayCircle className="size-4" />

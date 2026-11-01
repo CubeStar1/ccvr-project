@@ -250,3 +250,9 @@ FOR ALL
 TO authenticated
 USING (auth.uid() = user_id)
 WITH CHECK (auth.uid() = user_id);
+
+-- Starter prompts for the project workspace, written by an LLM from a video's
+-- aggregates by /api/videos/[id]/suggestions and cached here so the model runs
+-- once per analysis rather than once per page view.
+-- { basis, items: [{ kind, label, prompt }], model, created_at }
+ALTER TABLE public.video_core ADD COLUMN IF NOT EXISTS suggestions jsonb NULL;

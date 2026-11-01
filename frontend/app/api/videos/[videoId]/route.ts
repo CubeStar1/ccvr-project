@@ -37,6 +37,41 @@ export async function GET(_request: Request, { params }: { params: Params }) {
   }
 }
 
+const MAX_TITLE = 200
+
+/**
+ * Rename a video. The title lives only on this row: core keys videos by content
+ * hash and the agent's tools read titles from here, so nothing else needs telling.
+ */
+export async function PATCH(request: Request, { params }: { params: Params }) {
+  const { videoId } = await params
+  const { supabase, error } = await loadOwnedVideo(videoId)
+  if (error) return error
+
+  let body: { title?: unknown } = {}
+  try {
+    body = await request.json()
+  } catch {
+    return new Response('Expected a JSON body', { status: 400 })
+  }
+
+  const title = typeof body.title === 'string' ? body.title.replace(/\s+/g, ' ').trim() : ''
+  if (!title) return new Response('Title cannot be empty', { status: 400 })
+  if (title.length > MAX_TITLE) {
+    return new Response(`Title must be ${MAX_TITLE} characters or fewer`, { status: 400 })
+  }
+
+  const { data, error: updateError } = await supabase!
+    .from('video_core')
+    .update({ title })
+    .eq('id', videoId)
+    .select('*')
+    .single()
+
+  if (updateError) return new Response(updateError.message, { status: 500 })
+  return Response.json({ video: data })
+}
+
 export async function DELETE(_request: Request, { params }: { params: Params }) {
   const { videoId } = await params
   const { video, supabase, error } = await loadOwnedVideo(videoId)
@@ -64,7 +99,11 @@ export async function DELETE(_request: Request, { params }: { params: Params }) 
 
   // Only videos uploaded before the backend stored them have a copy in Supabase.
   // A newer upload's source is `upload:<id>`, and the backend just deleted its file.
-  if (video!.source_type === 'upload' && video!.storage_path && !video!.source_url?.startsWith('upload:')) {
+  if (
+    video!.source_type === 'upload' &&
+    video!.storage_path &&
+    !video!.source_url?.startsWith('upload:')
+  ) {
     await supabase!.storage.from('project-assets').remove([video!.storage_path])
   }
 

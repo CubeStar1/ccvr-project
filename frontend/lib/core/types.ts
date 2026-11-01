@@ -7,6 +7,8 @@
  * now handed a range and seeks into the same file.
  */
 
+import type { StoredSuggestions } from './suggestions'
+
 export type VideoStatus =
   | 'pending'
   | 'uploading'
@@ -72,6 +74,8 @@ export interface ProjectVideo {
   aggregates: string[]
   chunk_config: string | null
   chunk_count: number
+  /** LLM-written starter prompts, cached against the analysis they came from. */
+  suggestions?: StoredSuggestions | null
   created_at: string
   updated_at: string
 }
