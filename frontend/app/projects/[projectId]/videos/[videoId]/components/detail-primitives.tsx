@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { ChevronRight, Play } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { formatTimestamp } from '@/lib/core/format'
+import { parseLoose } from './aggregate-shapes'
 
 /**
  * A titled block, collapsed and expanded by its header.
@@ -39,49 +40,55 @@ export function Section({
 
   const heading = (
     <>
+      {icon && (
+        <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-muted/70 text-muted-foreground [&_svg]:size-3.5">
+          {icon}
+        </span>
+      )}
+      <span className="truncate">{title}</span>
+      {count !== undefined && (
+        <span className="text-[12px] font-normal tabular-nums text-muted-foreground">{count}</span>
+      )}
+      {subtitle && (
+        <span className="hidden truncate text-[12px] font-normal text-muted-foreground sm:inline">
+          · {subtitle}
+        </span>
+      )}
       {collapsible && (
         <ChevronRight
           className={cn(
-            'size-3.5 shrink-0 text-muted-foreground transition-transform',
+            'ml-auto size-4 shrink-0 text-muted-foreground/60 transition-transform duration-200',
             isOpen && 'rotate-90'
           )}
         />
-      )}
-      {icon && <span className="text-muted-foreground">{icon}</span>}
-      {title}
-      {count !== undefined && (
-        <span className="rounded-full bg-muted px-1.5 py-0.5 text-[11px] font-normal tabular-nums text-muted-foreground">
-          {count}
-        </span>
-      )}
-      {subtitle && (
-        <span className="truncate text-[11px] font-normal text-muted-foreground">{subtitle}</span>
       )}
     </>
   )
 
   return (
-    <section className={cn('overflow-hidden rounded-xl border bg-card', className)}>
-      <div
-        className={cn(
-          'flex flex-wrap items-center justify-between gap-2 px-4 py-2.5',
-          isOpen && 'border-b'
-        )}
-      >
+    <section
+      className={cn(
+        'overflow-hidden rounded-2xl border border-border/60 bg-card/50 shadow-[0_1px_0_0_rgb(255_255_255/0.03)_inset]',
+        className
+      )}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2 px-5 py-3.5">
         {collapsible ? (
           <button
             type="button"
             onClick={() => setOpen((current) => !current)}
-            className="flex min-w-0 flex-1 items-center gap-2 text-left text-sm font-medium"
+            className="flex min-w-0 flex-1 items-center gap-2.5 text-left text-[14px] font-medium tracking-tight"
           >
             {heading}
           </button>
         ) : (
-          <h3 className="flex min-w-0 flex-1 items-center gap-2 text-sm font-medium">{heading}</h3>
+          <h3 className="flex min-w-0 flex-1 items-center gap-2.5 text-[14px] font-medium tracking-tight">
+            {heading}
+          </h3>
         )}
         {isOpen && actions}
       </div>
-      {isOpen && <div className="p-4">{children}</div>}
+      {isOpen && <div className="px-5 pb-5">{children}</div>}
     </section>
   )
 }
@@ -98,9 +105,7 @@ export function Field({
 }) {
   return (
     <div className={cn('min-w-0', className)}>
-      <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-        {label}
-      </div>
+      <div className="text-[11px] font-medium text-muted-foreground">{label}</div>
       <div className="mt-1 min-w-0 text-[13px]">{children}</div>
     </div>
   )
@@ -116,11 +121,11 @@ export function Stat({
   hint?: string
 }) {
   return (
-    <div className="rounded-lg border bg-background px-3 py-2.5">
-      <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-        {label}
+    <div className="rounded-xl bg-muted/40 px-3.5 py-3">
+      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className="mt-1 text-xl font-semibold tabular-nums leading-tight tracking-tight">
+        {value}
       </div>
-      <div className="mt-0.5 text-lg font-semibold tabular-nums leading-tight">{value}</div>
       {hint && <div className="mt-0.5 text-[11px] text-muted-foreground">{hint}</div>}
     </div>
   )
@@ -145,9 +150,9 @@ export function Chips({
         <span
           key={`${value}-${index}`}
           className={cn(
-            'rounded-md px-1.5 py-0.5 text-[11px] leading-snug',
-            tone === 'muted' && 'bg-muted text-muted-foreground',
-            tone === 'outline' && 'border bg-background text-muted-foreground',
+            'rounded-full px-2 py-0.5 text-[11px] leading-snug',
+            tone === 'muted' && 'bg-muted/70 text-muted-foreground',
+            tone === 'outline' && 'border border-border/70 text-foreground/75',
             tone === 'accent' && 'bg-primary/10 text-primary'
           )}
         >
@@ -209,17 +214,11 @@ export function EmptyNote({ children }: { children: React.ReactNode }) {
 }
 
 /** A count and its bar, for shares that add up to something (talk time, sentiment). */
-export function ShareBar({
-  value,
-  className,
-}: {
-  value: number
-  className?: string
-}) {
+export function ShareBar({ value, className }: { value: number; className?: string }) {
   return (
-    <div className={cn('h-1.5 w-full overflow-hidden rounded-full bg-muted', className)}>
+    <div className={cn('h-1.5 w-full overflow-hidden rounded-full bg-muted/70', className)}>
       <div
-        className="h-full rounded-full bg-primary/70"
+        className="h-full rounded-full bg-foreground/60"
         style={{ width: `${Math.max(0, Math.min(1, value)) * 100}%` }}
       />
     </div>
@@ -233,17 +232,30 @@ export function ShareBar({
  * are added without the frontend knowing — so an unrecognised shape has to
  * render as *something* readable rather than being dropped.
  */
-export function JsonView({ value, depth = 0 }: { value: unknown; depth?: number }) {
+export function JsonView({ value: input, depth = 0 }: { value: unknown; depth?: number }) {
+  // A JSON document stored as a string is still structure, not prose.
+  const value = parseLoose(input)
+
   if (value === null || value === undefined) {
     return <span className="text-[12px] text-muted-foreground">—</span>
   }
 
   if (typeof value === 'string') {
-    return <span className="whitespace-pre-wrap break-words text-[12px]">{value}</span>
+    return (
+      <span className="whitespace-pre-wrap break-words text-[12.5px] leading-relaxed text-foreground/85">
+        {value}
+      </span>
+    )
   }
 
   if (typeof value === 'number' || typeof value === 'boolean') {
-    return <span className="text-[12px] tabular-nums">{String(value)}</span>
+    return (
+      <span className="font-mono text-[12px] tabular-nums text-foreground/85">
+        {typeof value === 'number' && !Number.isInteger(value)
+          ? Number(value.toFixed(4))
+          : String(value)}
+      </span>
+    )
   }
 
   if (Array.isArray(value)) {
@@ -252,22 +264,35 @@ export function JsonView({ value, depth = 0 }: { value: unknown; depth?: number 
     }
 
     // A flat list of scalars reads far better as chips than as numbered rows.
-    if (value.every((item) => typeof item === 'string' || typeof item === 'number')) {
+    if (
+      value.every(
+        (item) =>
+          (typeof item === 'string' && parseLoose(item) === item) || typeof item === 'number'
+      )
+    ) {
       return <Chips items={value.map(String)} tone="outline" />
     }
 
+    // Long lists are capped; the JSON view on the Record tab has the rest.
+    const shown = value.slice(0, 50)
     return (
-      <ol className="space-y-1.5">
-        {value.map((item, index) => (
-          <li key={index} className="flex gap-2">
-            <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+      <ol className="space-y-2">
+        {shown.map((item, index) => (
+          <li
+            key={index}
+            className="relative rounded-xl bg-muted/30 py-2.5 pl-9 pr-3 text-[12.5px]"
+          >
+            <span className="absolute left-3 top-2.5 text-[10.5px] tabular-nums text-muted-foreground/70">
               {index + 1}
             </span>
-            <div className="min-w-0 flex-1">
-              <JsonView value={item} depth={depth + 1} />
-            </div>
+            <JsonView value={item} depth={depth + 1} />
           </li>
         ))}
+        {value.length > shown.length && (
+          <li className="px-3 text-[11.5px] text-muted-foreground">
+            + {value.length - shown.length} more
+          </li>
+        )}
       </ol>
     )
   }
@@ -278,13 +303,13 @@ export function JsonView({ value, depth = 0 }: { value: unknown; depth?: number 
   }
 
   return (
-    <dl className={cn('space-y-1.5', depth > 0 && 'border-l pl-3')}>
+    <dl className={cn('space-y-2', depth > 1 && 'border-l border-border/60 pl-3')}>
       {entries.map(([key, item]) => (
-        <div key={key} className="flex flex-col gap-0.5 sm:flex-row sm:gap-3">
-          <dt className="shrink-0 text-[11px] font-medium text-muted-foreground sm:w-40">
+        <div key={key} className="flex flex-col gap-0.5 sm:flex-row sm:gap-4">
+          <dt className="shrink-0 text-[11.5px] capitalize text-muted-foreground sm:w-32">
             {key.replace(/_/g, ' ')}
           </dt>
-          <dd className="min-w-0 flex-1">
+          <dd className="min-w-0 flex-1 text-[12.5px]">
             <JsonView value={item} depth={depth + 1} />
           </dd>
         </div>
@@ -294,17 +319,11 @@ export function JsonView({ value, depth = 0 }: { value: unknown; depth?: number 
 }
 
 /** Collapsed raw output, so "everything" stays true without swamping the page. */
-export function RawDisclosure({
-  label = 'Raw output',
-  value,
-}: {
-  label?: string
-  value: unknown
-}) {
+export function RawDisclosure({ label = 'Raw output', value }: { label?: string; value: unknown }) {
   const [open, setOpen] = useState(false)
 
   return (
-    <div className="mt-3 border-t pt-2">
+    <div className="mt-4 border-t border-border/50 pt-3">
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
@@ -314,7 +333,7 @@ export function RawDisclosure({
         {label}
       </button>
       {open && (
-        <pre className="mt-2 max-h-96 overflow-auto rounded-lg bg-muted/50 p-3 text-[11px] leading-relaxed">
+        <pre className="mt-2 max-h-96 overflow-auto rounded-xl bg-muted/40 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground">
           {JSON.stringify(value, null, 2)}
         </pre>
       )}

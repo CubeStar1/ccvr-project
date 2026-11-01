@@ -42,6 +42,14 @@ import { SpeechPanel } from './speech-panel'
 import { RawPanel } from './raw-panel'
 import { Chips } from './detail-primitives'
 
+/** Underline tabs: quieter than a pill tray, and the active one is unmistakable. */
+const TAB_TRIGGER = cn(
+  'relative h-full flex-none gap-1.5 rounded-none border-0 bg-transparent px-3 text-[13px] font-medium text-muted-foreground shadow-none',
+  'hover:text-foreground data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none',
+  'dark:text-muted-foreground dark:data-[state=active]:border-transparent dark:data-[state=active]:bg-transparent dark:data-[state=active]:text-foreground',
+  'after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-foreground after:opacity-0 after:transition-opacity data-[state=active]:after:opacity-100'
+)
+
 interface VideoDetailClientProps {
   projectId: string
   projectName: string
@@ -81,8 +89,7 @@ export function VideoDetailClient({
 
   // The row's duration can be null for a video whose ingest never reported one;
   // the last chunk's end is the next best thing every panel can share.
-  const duration =
-    video.duration || details?.core?.duration || chunks.at(-1)?.end || 0
+  const duration = video.duration || details?.core?.duration || chunks.at(-1)?.end || 0
 
   const seek = useCallback((seconds: number) => {
     playerRef.current?.seekTo(seconds)
@@ -101,8 +108,8 @@ export function VideoDetailClient({
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-background">
-      <header className="z-30 shrink-0 border-b bg-background/85 backdrop-blur">
-        <div className="mx-auto flex max-w-400 flex-wrap items-center gap-3 px-4 py-2.5 lg:px-6">
+      <header className="z-30 shrink-0 border-b border-border/60 bg-background/85 backdrop-blur">
+        <div className="mx-auto flex max-w-400 flex-wrap items-center gap-3 px-4 py-3 lg:px-8">
           <Link
             href={`/projects/${projectId}`}
             className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[13px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
@@ -111,9 +118,12 @@ export function VideoDetailClient({
             {projectName}
           </Link>
 
-          <span className="text-muted-foreground/40">/</span>
+          <span className="text-muted-foreground/30">/</span>
 
-          <h1 className="min-w-0 flex-1 truncate text-[13px] font-medium" title={video.title}>
+          <h1
+            className="min-w-0 flex-1 truncate text-[14px] font-semibold tracking-tight"
+            title={video.title}
+          >
             {video.title}
           </h1>
 
@@ -205,10 +215,10 @@ export function VideoDetailClient({
         refers to defeats the point. Below `lg` they stack and the page scrolls
         as one.
       */}
-      <div className="mx-auto flex w-full min-h-0 max-w-400 flex-1 flex-col overflow-y-auto lg:flex-row lg:gap-6 lg:overflow-hidden lg:px-6">
+      <div className="mx-auto flex w-full min-h-0 max-w-400 flex-1 flex-col overflow-y-auto lg:flex-row lg:gap-8 lg:overflow-hidden lg:px-8">
         {/* Player and the facts about the file */}
-        <aside className="shrink-0 space-y-3 px-4 pb-2 pt-4 lg:w-96 lg:overflow-y-auto lg:px-0 lg:pb-6">
-          <div className="overflow-hidden rounded-xl border bg-card">
+        <aside className="shrink-0 space-y-4 px-4 pb-2 pt-5 lg:w-100 lg:overflow-y-auto lg:px-0 lg:pb-8">
+          <div className="overflow-hidden rounded-2xl border border-border/60 bg-card/50 shadow-sm">
             <VideoPlayer
               ref={playerRef}
               src={video.playback_url}
@@ -216,138 +226,153 @@ export function VideoDetailClient({
               className="w-full rounded-none"
               onTimeUpdate={handleTimeUpdate}
             />
-            <div className="flex items-center justify-between border-t px-3 py-2 text-[11px] tabular-nums text-muted-foreground">
+            <div className="flex items-center justify-between px-4 py-2.5 text-[12px] tabular-nums text-muted-foreground">
               <span>
-                {formatDuration(currentTime)} / {formatDuration(duration)}
+                <span className="text-foreground/90">{formatDuration(currentTime)}</span>
+                <span className="text-muted-foreground/60"> / {formatDuration(duration)}</span>
               </span>
               <span className="truncate pl-2">{activeChunkLabel(chunks, currentTime)}</span>
             </div>
           </div>
 
-          <dl className="grid grid-cols-2 gap-x-4 gap-y-2.5 rounded-xl border bg-card p-3">
-            <Meta label="Chunks">
-              {details?.chunk_total || video.chunk_count || 0}
-              {details && details.chunk_total > chunks.length && (
-                <span className="text-muted-foreground"> ({chunks.length} loaded)</span>
-              )}
-            </Meta>
-            <Meta label="Duration">{formatDuration(duration)}</Meta>
-            <Meta label="Size">{formatBytes(video.size_bytes ?? details?.core?.size_bytes)}</Meta>
-            <Meta label="Chunking">{video.chunk_config ?? details?.core?.chunk_config ?? '—'}</Meta>
-            <div className="col-span-2">
-              <dt className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                Analyzers
-              </dt>
-              <dd className="mt-1">
+          <div className="rounded-2xl border border-border/60 bg-card/50 p-4">
+            <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-xl bg-border/50">
+              <Meta label="Duration">{formatDuration(duration)}</Meta>
+              <Meta label="Chunks">
+                {details?.chunk_total || video.chunk_count || 0}
+                {details && details.chunk_total > chunks.length && (
+                  <span className="text-[12px] font-normal text-muted-foreground">
+                    {' '}
+                    ({chunks.length} loaded)
+                  </span>
+                )}
+              </Meta>
+              <Meta label="Size">{formatBytes(video.size_bytes ?? details?.core?.size_bytes)}</Meta>
+              <Meta label="Chunking">
+                <span className="capitalize">
+                  {video.chunk_config ?? details?.core?.chunk_config ?? '—'}
+                </span>
+              </Meta>
+            </dl>
+
+            <div className="mt-4 space-y-3.5">
+              <div>
+                <div className="mb-1.5 text-[11px] text-muted-foreground">Analyzers</div>
                 {analyzers.length > 0 ? (
-                  <Chips items={analyzers} tone="outline" />
+                  <Chips items={analyzers.map(prettyId)} tone="outline" />
                 ) : (
-                  <span className="text-[12px] text-muted-foreground">none recorded</span>
+                  <span className="text-[12px] text-muted-foreground">None recorded</span>
                 )}
-              </dd>
-            </div>
-            <div className="col-span-2">
-              <dt className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                Aggregates
-              </dt>
-              <dd className="mt-1">
-                {Object.keys(aggregates).length > 0 ? (
-                  <Chips items={Object.keys(aggregates).sort()} tone="muted" />
-                ) : (
-                  <span className="text-[12px] text-muted-foreground">none stored</span>
-                )}
-              </dd>
-            </div>
-            {video.ingest_config && (
-              <div className="col-span-2 border-t pt-2">
-                <p className="text-[11px] text-muted-foreground">
-                  {describeChunking(video.ingest_config)}
-                </p>
               </div>
+              <div>
+                <div className="mb-1.5 text-[11px] text-muted-foreground">Aggregates</div>
+                {Object.keys(aggregates).length > 0 ? (
+                  <Chips items={Object.keys(aggregates).sort().map(prettyId)} tone="muted" />
+                ) : (
+                  <span className="text-[12px] text-muted-foreground">None stored</span>
+                )}
+              </div>
+            </div>
+
+            {video.ingest_config && (
+              <p className="mt-4 border-t border-border/50 pt-3 text-[12px] leading-relaxed text-muted-foreground">
+                {describeChunking(video.ingest_config)}
+              </p>
             )}
-          </dl>
+          </div>
         </aside>
 
         {/* The analysis */}
-        <main className="min-w-0 flex-1 px-4 pb-10 pt-4 lg:overflow-y-auto lg:px-0 lg:pb-8">
-          {error && (
-            <Banner tone="error">
-              {(error as Error).message || 'Could not load this video’s analysis.'}
-            </Banner>
-          )}
-
-          {details?.errors.map((message) => (
-            <Banner key={message} tone="warning">
-              {message}
-            </Banner>
-          ))}
-
+        <main className="flex min-w-0 flex-1 flex-col px-4 lg:min-h-0 lg:px-0">
           {isLoading ? (
-            <LoadingSkeleton />
+            <div className="pt-2">
+              <LoadingSkeleton />
+            </div>
           ) : (
-            <Tabs value={tab} onValueChange={setTab}>
-              <TabsList className="sticky top-0 z-20 mb-4 h-9 w-full justify-start overflow-x-auto">
-                <TabsTrigger value="overview" className="gap-1.5 text-xs">
+            <Tabs value={tab} onValueChange={setTab} className="min-h-0 flex-1 gap-0">
+              <TabsList className="sticky top-0 z-20 h-12 w-full shrink-0 justify-start gap-1 overflow-x-auto overflow-y-hidden rounded-none border-b border-border/60 bg-background p-0 [scrollbar-width:none] lg:static [&::-webkit-scrollbar]:hidden">
+                <TabsTrigger value="overview" className={TAB_TRIGGER}>
                   <Sparkles className="size-3.5" />
                   Overview
                 </TabsTrigger>
-                <TabsTrigger value="chunks" className="gap-1.5 text-xs">
+                <TabsTrigger value="chunks" className={TAB_TRIGGER}>
                   <Layers className="size-3.5" />
                   Chunks
-                  <span className="tabular-nums text-muted-foreground">{chunks.length}</span>
+                  <span className="rounded-full bg-muted px-1.5 text-[10px] tabular-nums text-muted-foreground">
+                    {chunks.length}
+                  </span>
                 </TabsTrigger>
-                <TabsTrigger value="speech" className="gap-1.5 text-xs">
+                <TabsTrigger value="speech" className={TAB_TRIGGER}>
                   <MessageSquare className="size-3.5" />
                   Speech
                 </TabsTrigger>
-                <TabsTrigger value="entities" className="gap-1.5 text-xs">
+                <TabsTrigger value="entities" className={TAB_TRIGGER}>
                   <Users className="size-3.5" />
                   People &amp; objects
                 </TabsTrigger>
-                <TabsTrigger value="raw" className="gap-1.5 text-xs">
+                <TabsTrigger value="raw" className={TAB_TRIGGER}>
                   <Braces className="size-3.5" />
                   Record
                 </TabsTrigger>
               </TabsList>
 
-              <TabsContent value="overview">
-                <OverviewPanel aggregates={aggregates} onSeek={seek} onOpenChunk={openChunk} />
-              </TabsContent>
+              {/* Only the panels scroll; the tab bar above stays put on a solid background. */}
+              <div className="min-h-0 flex-1 pb-10 pt-5 lg:overflow-y-auto">
+                {error && (
+                  <Banner tone="error">
+                    {(error as Error).message || 'Could not load this video’s analysis.'}
+                  </Banner>
+                )}
 
-              <TabsContent value="chunks">
-                <ChunkPanel
-                  chunks={chunks}
-                  chunkTotal={details?.chunk_total ?? chunks.length}
-                  analyzers={analyzers}
-                  duration={duration}
-                  currentTime={currentTime}
-                  focusChunkId={focusChunkId}
-                  onSeek={seek}
-                />
-              </TabsContent>
+                {details?.errors.map((message) => (
+                  <Banner key={message} tone="warning">
+                    {message}
+                  </Banner>
+                ))}
 
-              <TabsContent value="speech">
-                <SpeechPanel
-                  chunks={chunks}
-                  aggregates={aggregates}
-                  currentTime={currentTime}
-                  onSeek={seek}
-                  onOpenChunk={openChunk}
-                />
-              </TabsContent>
+                <TabsContent value="overview">
+                  <OverviewPanel
+                    aggregates={aggregates}
+                    duration={duration}
+                    onSeek={seek}
+                    onOpenChunk={openChunk}
+                  />
+                </TabsContent>
 
-              <TabsContent value="entities">
-                <EntitiesPanel
-                  aggregates={aggregates}
-                  duration={duration}
-                  onSeek={seek}
-                  onOpenChunk={openChunk}
-                />
-              </TabsContent>
+                <TabsContent value="chunks">
+                  <ChunkPanel
+                    chunks={chunks}
+                    chunkTotal={details?.chunk_total ?? chunks.length}
+                    analyzers={analyzers}
+                    duration={duration}
+                    currentTime={currentTime}
+                    focusChunkId={focusChunkId}
+                    onSeek={seek}
+                  />
+                </TabsContent>
 
-              <TabsContent value="raw">
-                {details && <RawPanel details={details} />}
-              </TabsContent>
+                <TabsContent value="speech">
+                  <SpeechPanel
+                    chunks={chunks}
+                    aggregates={aggregates}
+                    currentTime={currentTime}
+                    onSeek={seek}
+                    onOpenChunk={openChunk}
+                  />
+                </TabsContent>
+
+                <TabsContent value="entities">
+                  <EntitiesPanel
+                    aggregates={aggregates}
+                    chunks={chunks}
+                    duration={duration}
+                    onSeek={seek}
+                    onOpenChunk={openChunk}
+                  />
+                </TabsContent>
+
+                <TabsContent value="raw">{details && <RawPanel details={details} />}</TabsContent>
+              </div>
             </Tabs>
           )}
         </main>
@@ -358,21 +383,24 @@ export function VideoDetailClient({
 
 /** Which chunk the playhead is inside, shown under the player as a bearing. */
 function activeChunkLabel(chunks: ChunkOut[], currentTime: number): string {
-  const index = chunks.findIndex(
-    (chunk) => currentTime >= chunk.start && currentTime < chunk.end
-  )
-  return index >= 0 ? `chunk ${chunks[index].chunk_id} · ${index + 1} of ${chunks.length}` : ''
+  const index = chunks.findIndex((chunk) => currentTime >= chunk.start && currentTime < chunk.end)
+  return index >= 0 ? `Chunk ${index + 1} of ${chunks.length}` : ''
 }
 
 function Meta({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="min-w-0">
-      <dt className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-        {label}
-      </dt>
-      <dd className="mt-0.5 truncate text-[13px] tabular-nums">{children}</dd>
+    <div className="min-w-0 bg-card px-3.5 py-3">
+      <dt className="text-[11px] text-muted-foreground">{label}</dt>
+      <dd className="mt-1 truncate text-[15px] font-semibold tabular-nums tracking-tight">
+        {children}
+      </dd>
     </div>
   )
+}
+
+/** `object_detection` -> `object detection`, for chips a person reads. */
+function prettyId(id: string) {
+  return id.replace(/_/g, ' ')
 }
 
 function StatusPill({ video }: { video: ProjectVideo }) {
@@ -409,7 +437,7 @@ function Banner({ tone, children }: { tone: 'error' | 'warning'; children: React
   return (
     <div
       className={cn(
-        'mb-3 flex items-start gap-2 rounded-lg px-3 py-2 text-[12px]',
+        'mb-3 flex items-start gap-2 rounded-xl px-3.5 py-2.5 text-[12.5px]',
         tone === 'error'
           ? 'bg-red-500/10 text-red-600 dark:text-red-400'
           : 'bg-amber-500/10 text-amber-700 dark:text-amber-400'
@@ -424,13 +452,9 @@ function Banner({ tone, children }: { tone: 'error' | 'warning'; children: React
 function LoadingSkeleton() {
   return (
     <div className="space-y-3">
-      <div className="h-9 w-96 animate-pulse rounded-lg bg-muted" />
+      <div className="h-11 w-full animate-pulse border-b border-border/60" />
       {[280, 180, 220].map((height, index) => (
-        <div
-          key={index}
-          className="animate-pulse rounded-xl bg-muted"
-          style={{ height }}
-        />
+        <div key={index} className="animate-pulse rounded-2xl bg-muted/50" style={{ height }} />
       ))}
     </div>
   )

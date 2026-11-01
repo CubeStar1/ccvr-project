@@ -7,6 +7,7 @@ import {
   Eye,
   Film,
   LayoutList,
+  Play,
   Rows3,
   Search,
   Type,
@@ -19,6 +20,7 @@ import { cn } from '@/lib/utils'
 import { formatTimestamp } from '@/lib/core/format'
 import type { AnalyzerId, ChunkOut } from '@/lib/core/types'
 import { Chips, EmptyNote, JsonView, RawDisclosure, TimeLink } from './detail-primitives'
+import { asRecord, labelOf, parseLoose, readDetections, str } from './aggregate-shapes'
 
 /** Rendering 500 expanded chunks at once is what makes this page feel slow. */
 const INITIAL_RENDER = 25
@@ -42,51 +44,16 @@ const ANALYZER_ICONS: Record<string, React.ReactNode> = {
 }
 
 /**
- * One hue per analyzer, reused everywhere that analyzer's output appears.
- *
- * Colour is doing real work here rather than decoration: a chunk is six passes
- * merged into one record, and the only way to read it at a glance is for
- * "this came from OCR" to be visible without reading the label.
+ * One hue per analyzer, used sparingly — a dot or an icon — so "this came from
+ * OCR" reads at a glance without the page turning into a paint chart.
  */
-const ANALYZER_TONES: Record<string, { chip: string; bar: string; ring: string }> = {
-  default_video: {
-    chip: 'bg-sky-500/10 text-sky-700 dark:text-sky-300',
-    bar: 'bg-sky-500',
-    ring: 'border-sky-500/30',
-  },
-  diarization: {
-    chip: 'bg-violet-500/10 text-violet-700 dark:text-violet-300',
-    bar: 'bg-violet-500',
-    ring: 'border-violet-500/30',
-  },
-  transcript: {
-    chip: 'bg-violet-500/10 text-violet-700 dark:text-violet-300',
-    bar: 'bg-violet-500',
-    ring: 'border-violet-500/30',
-  },
-  ocr: {
-    chip: 'bg-amber-500/10 text-amber-700 dark:text-amber-300',
-    bar: 'bg-amber-500',
-    ring: 'border-amber-500/30',
-  },
-  people: {
-    chip: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
-    bar: 'bg-emerald-500',
-    ring: 'border-emerald-500/30',
-  },
-  object_detection: {
-    chip: 'bg-rose-500/10 text-rose-700 dark:text-rose-300',
-    bar: 'bg-rose-500',
-    ring: 'border-rose-500/30',
-  },
-}
-
-const FACET_TONES: Record<string, string> = {
-  Setting: 'bg-teal-500/10 text-teal-700 dark:text-teal-300',
-  People: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
-  Actions: 'bg-sky-500/10 text-sky-700 dark:text-sky-300',
-  Objects: 'bg-rose-500/10 text-rose-700 dark:text-rose-300',
-  Tags: 'bg-muted text-muted-foreground',
+const ANALYZER_TONES: Record<string, { bar: string; text: string }> = {
+  default_video: { bar: 'bg-sky-400', text: 'text-sky-500 dark:text-sky-400' },
+  diarization: { bar: 'bg-violet-400', text: 'text-violet-500 dark:text-violet-400' },
+  transcript: { bar: 'bg-violet-400', text: 'text-violet-500 dark:text-violet-400' },
+  ocr: { bar: 'bg-amber-400', text: 'text-amber-500 dark:text-amber-400' },
+  people: { bar: 'bg-emerald-400', text: 'text-emerald-500 dark:text-emerald-400' },
+  object_detection: { bar: 'bg-rose-400', text: 'text-rose-500 dark:text-rose-400' },
 }
 
 /** Stable per-speaker colour, so the same voice looks the same in every chunk. */
@@ -98,6 +65,12 @@ const SPEAKER_TONES = [
   'bg-rose-500',
   'bg-teal-500',
 ]
+
+/** `SPEAKER_03` → `3`, for the avatar dot beside each turn. */
+function speakerInitial(speaker: string | undefined) {
+  const digits = speaker?.replace(/\D/g, '') ?? ''
+  return digits ? String(Number(digits)) : '?'
+}
 
 function speakerTone(speaker: string | undefined) {
   if (!speaker) return 'bg-muted-foreground'
@@ -129,7 +102,7 @@ function chunkGist(chunk: ChunkOut): string {
     chunk.ocr?.summary ||
     chunk.transcript?.text ||
     (chunk.diarization?.turns ?? []).map((turn) => turn.text).join(' ') ||
-    (chunk.object_detection?.objects ?? []).join(', ') ||
+    (chunk.object_detection?.objects ?? []).map(labelOf).join(', ') ||
     'No description'
   )
 }
@@ -153,10 +126,9 @@ function searchableText(chunk: ChunkOut): string {
         .map((key) => (person as Record<string, unknown>)[key])
         .join(' ')
     ),
-    ...(chunk.object_detection?.detections ?? []).map(
-      (detection) => `${detection.object} ${detection.description ?? ''}`
+    ...readDetections(chunk.object_detection?.detections, chunk.object_detection?.objects).map(
+      (detection) => `${detection.object} ${detection.appearance} ${detection.context}`
     ),
-    ...(chunk.object_detection?.objects ?? []),
   ]
     .filter(Boolean)
     .join(' ')
@@ -211,10 +183,7 @@ export function ChunkPanel({
       .map(({ chunk }) => chunk)
   }, [indexed, search, analyzerFilter])
 
-  const matched = useMemo(
-    () => new Set(filtered.map((chunk) => chunk.chunk_id)),
-    [filtered]
-  )
+  const matched = useMemo(() => new Set(filtered.map((chunk) => chunk.chunk_id)), [filtered])
 
   useEffect(() => setRendered(INITIAL_RENDER), [search, analyzerFilter, dense])
 
@@ -242,7 +211,7 @@ export function ChunkPanel({
   )
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       {duration > 0 && chunks.length > 0 && (
         <ChunkTimeline
           chunks={chunks}
@@ -269,12 +238,12 @@ export function ChunkPanel({
 
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative min-w-56 flex-1">
-          <Search className="absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Search className="absolute left-3.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search descriptions, speech, on-screen text, people, objects"
-            className="h-9 pl-9 pr-8 text-sm"
+            placeholder="Search scenes, speech, text, people, objects…"
+            className="h-9 rounded-xl border-border/60 bg-card/50 pl-9 pr-8 text-[13px] shadow-none"
           />
           {search && (
             <button
@@ -287,42 +256,64 @@ export function ChunkPanel({
           )}
         </div>
 
-        <button
-          type="button"
-          onClick={() => setDense((value) => !value)}
-          title={dense ? 'Switch to full detail' : 'Switch to compact rows'}
-          className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-        >
-          {dense ? <LayoutList className="size-3.5" /> : <Rows3 className="size-3.5" />}
-          {dense ? 'Detail' : 'Compact'}
-        </button>
+        {analyzers.length > 1 && (
+          <div className="flex items-center gap-0.5 rounded-lg bg-muted/50 p-0.5">
+            <FilterPill
+              active={analyzerFilter === 'all'}
+              onClick={() => setAnalyzerFilter('all')}
+              label="All"
+            />
+            {analyzers.map((id) => (
+              <FilterPill
+                key={id}
+                active={analyzerFilter === id}
+                onClick={() => setAnalyzerFilter(id)}
+                label={ANALYZER_LABELS[id] ?? id}
+                dot={ANALYZER_TONES[id]?.bar}
+              />
+            ))}
+          </div>
+        )}
+
+        <div className="flex items-center gap-0.5 rounded-lg bg-muted/50 p-0.5">
+          <button
+            type="button"
+            onClick={() => setDense(false)}
+            title="Full detail"
+            className={cn(
+              'flex size-7 items-center justify-center rounded-md transition-colors',
+              !dense
+                ? 'bg-background text-foreground shadow-sm ring-1 ring-border/70'
+                : 'text-muted-foreground hover:text-foreground'
+            )}
+          >
+            <LayoutList className="size-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setDense(true)}
+            title="Compact rows"
+            className={cn(
+              'flex size-7 items-center justify-center rounded-md transition-colors',
+              dense
+                ? 'bg-background text-foreground shadow-sm ring-1 ring-border/70'
+                : 'text-muted-foreground hover:text-foreground'
+            )}
+          >
+            <Rows3 className="size-3.5" />
+          </button>
+        </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-1">
-        <FilterPill
-          active={analyzerFilter === 'all'}
-          onClick={() => setAnalyzerFilter('all')}
-          label="All passes"
-        />
-        {analyzers.map((id) => (
-          <FilterPill
-            key={id}
-            active={analyzerFilter === id}
-            onClick={() => setAnalyzerFilter(id)}
-            label={ANALYZER_LABELS[id] ?? id}
-            icon={ANALYZER_ICONS[id]}
-            tone={ANALYZER_TONES[id]?.chip}
-          />
-        ))}
-        <span className="ml-auto text-[11px] text-muted-foreground">
-          {visible.length} of {filtered.length}
-          {filtered.length !== chunks.length && ` · filtered from ${chunks.length}`}
+      {(filtered.length !== chunks.length || chunkTotal > chunks.length) && (
+        <p className="px-1 text-[12px] text-muted-foreground">
+          {filtered.length} of {chunks.length} chunks
           {chunkTotal > chunks.length && ` · core holds ${chunkTotal}`}
-        </span>
-      </div>
+        </p>
+      )}
 
       {visible.length === 0 ? (
-        <div className="rounded-xl border border-dashed py-16 text-center">
+        <div className="rounded-2xl border border-dashed border-border/60 py-16 text-center">
           <Film className="mx-auto size-6 text-muted-foreground/60" />
           <p className="mt-2 text-sm font-medium">
             {chunks.length === 0 ? 'No chunks stored' : 'No chunks match'}
@@ -334,7 +325,7 @@ export function ChunkPanel({
           </p>
         </div>
       ) : dense ? (
-        <ul className="overflow-hidden rounded-xl border bg-card">
+        <ul className="overflow-hidden rounded-2xl border border-border/60 bg-card/50">
           {visible.map((chunk) => (
             <CompactRow
               key={`${chunk.chunk_id}-${chunk.start}`}
@@ -356,7 +347,6 @@ export function ChunkPanel({
               key={`${chunk.chunk_id}-${chunk.start}`}
               chunk={chunk}
               index={positions.get(chunk.chunk_id) ?? 0}
-              duration={duration}
               isActive={currentTime >= chunk.start && currentTime < chunk.end}
               isSelected={selected === chunk.chunk_id}
               analyzerFilter={analyzerFilter}
@@ -406,24 +396,34 @@ function ChunkTimeline({
   onPick: (chunk: ChunkOut) => void
 }) {
   const [hovered, setHovered] = useState<ChunkOut | null>(null)
+  const legend = ANALYZER_ORDER.filter((id) =>
+    chunks.some((chunk) => analyzersOn(chunk).includes(id))
+  )
 
   return (
-    <div className="rounded-xl border bg-card p-3">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-          Chunk map
-        </span>
-        <span className="truncate text-[11px] text-muted-foreground">
-          {hovered
-            ? `${formatTimestamp(hovered.start)}–${formatTimestamp(hovered.end)} · ${chunkGist(
-                hovered
-              ).slice(0, 90)}`
-            : `${chunks.length} chunks over ${formatTimestamp(duration)}`}
+    <div className="rounded-2xl border border-border/60 bg-card/50 p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-4">
+          <span className="text-[13px] font-medium tracking-tight">Timeline</span>
+          <div className="hidden items-center gap-3 sm:flex">
+            {legend.map((id) => (
+              <span
+                key={id}
+                className="flex items-center gap-1.5 text-[11px] text-muted-foreground"
+              >
+                <span className={cn('size-1.5 rounded-full', ANALYZER_TONES[id]?.bar)} />
+                {ANALYZER_LABELS[id] ?? id}
+              </span>
+            ))}
+          </div>
+        </div>
+        <span className="text-[11px] tabular-nums text-muted-foreground">
+          {formatTimestamp(currentTime)} / {formatTimestamp(duration)}
         </span>
       </div>
 
       <div
-        className="relative h-14 w-full overflow-hidden rounded-lg bg-muted/50"
+        className="relative h-12 w-full overflow-hidden rounded-lg bg-muted/30"
         onMouseLeave={() => setHovered(null)}
       >
         {chunks.map((chunk) => {
@@ -439,12 +439,11 @@ function ChunkTimeline({
               type="button"
               onMouseEnter={() => setHovered(chunk)}
               onClick={() => onPick(chunk)}
-              title={`Chunk ${chunk.chunk_id}`}
+              aria-label={`Chunk ${chunk.chunk_id}`}
               className={cn(
-                'absolute bottom-0 top-0 flex flex-col justify-end gap-px overflow-hidden border-r border-background/60 px-px pb-px transition-opacity',
-                dimmed ? 'opacity-20' : 'hover:opacity-80',
-                isActive && 'bg-primary/10',
-                selected === chunk.chunk_id && 'bg-primary/15'
+                'group absolute inset-y-0 flex flex-col justify-end gap-[3px] px-[1.5px] pb-1.5 transition-colors',
+                dimmed ? 'opacity-20' : 'hover:bg-foreground/5',
+                (isActive || selected === chunk.chunk_id) && 'bg-foreground/[0.07]'
               )}
               style={{ left: `${left}%`, width: `${width}%` }}
             >
@@ -453,7 +452,11 @@ function ChunkTimeline({
               {ANALYZER_ORDER.filter((id) => present.includes(id)).map((id) => (
                 <span
                   key={id}
-                  className={cn('h-1.5 w-full rounded-sm', ANALYZER_TONES[id]?.bar ?? 'bg-primary')}
+                  className={cn(
+                    'h-1 w-full rounded-full opacity-60 transition-opacity group-hover:opacity-100',
+                    ANALYZER_TONES[id]?.bar ?? 'bg-primary',
+                    isActive && 'opacity-100'
+                  )}
                 />
               ))}
             </button>
@@ -461,27 +464,24 @@ function ChunkTimeline({
         })}
 
         <div
-          className="pointer-events-none absolute bottom-0 top-0 z-10 w-0.5 bg-foreground"
+          className="pointer-events-none absolute inset-y-0 z-10 w-px bg-foreground"
           style={{ left: `${Math.min(100, (currentTime / duration) * 100)}%` }}
         />
       </div>
 
-      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-        {ANALYZER_ORDER.filter((id) => chunks.some((chunk) => analyzersOn(chunk).includes(id))).map(
-          (id) => (
-            <span
-              key={id}
-              className="flex items-center gap-1 text-[10px] text-muted-foreground"
-            >
-              <span className={cn('size-2 rounded-sm', ANALYZER_TONES[id]?.bar)} />
-              {ANALYZER_LABELS[id] ?? id}
+      <p className="mt-2.5 h-4 truncate text-[12px] text-muted-foreground">
+        {hovered ? (
+          <>
+            <span className="tabular-nums text-foreground/80">
+              {formatTimestamp(hovered.start)}–{formatTimestamp(hovered.end)}
             </span>
-          )
+            <span className="mx-1.5 text-muted-foreground/50">·</span>
+            {chunkGist(hovered)}
+          </>
+        ) : (
+          `${chunks.length} chunks · click one to jump there`
         )}
-        <span className="ml-auto text-[10px] tabular-nums text-muted-foreground">
-          {formatTimestamp(currentTime)}
-        </span>
-      </div>
+      </p>
     </div>
   )
 }
@@ -490,27 +490,25 @@ function FilterPill({
   active,
   onClick,
   label,
-  icon,
-  tone,
+  dot,
 }: {
   active: boolean
   onClick: () => void
   label: string
-  icon?: React.ReactNode
-  tone?: string
+  dot?: string
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
       className={cn(
-        'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors',
+        'inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[12px] font-medium transition-colors',
         active
-          ? cn('border-transparent', tone ?? 'bg-primary/10 text-primary')
-          : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+          ? 'bg-background text-foreground shadow-sm ring-1 ring-border/70'
+          : 'text-muted-foreground hover:text-foreground'
       )}
     >
-      {icon}
+      {dot && <span className={cn('size-1.5 rounded-full', dot)} />}
       {label}
     </button>
   )
@@ -533,33 +531,38 @@ function CompactRow({
   const present = analyzersOn(chunk)
 
   return (
-    <li id={`chunk-${chunk.chunk_id}`} className="scroll-mt-24 border-b last:border-0">
+    <li
+      id={`chunk-${chunk.chunk_id}`}
+      className="scroll-mt-24 border-b border-border/50 last:border-0"
+    >
       <button
         type="button"
         onClick={onSelect}
         className={cn(
-          'flex w-full items-center gap-3 px-3 py-2 text-left transition-colors',
-          isSelected ? 'bg-primary/5' : isActive ? 'bg-muted/60' : 'hover:bg-muted/40'
+          'flex w-full items-center gap-4 px-4 py-2.5 text-left transition-colors',
+          isSelected ? 'bg-muted/60' : isActive ? 'bg-muted/40' : 'hover:bg-muted/30'
         )}
       >
-        <span className="w-8 shrink-0 text-[11px] tabular-nums text-muted-foreground">
-          {index + 1}
+        <span className="w-6 shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground/70">
+          {String(index + 1).padStart(2, '0')}
         </span>
         <span
           className={cn(
-            'w-24 shrink-0 text-[11px] tabular-nums',
-            isActive ? 'font-semibold text-primary' : 'text-muted-foreground'
+            'w-24 shrink-0 text-[12px] tabular-nums',
+            isActive ? 'font-medium text-foreground' : 'text-muted-foreground'
           )}
         >
           {formatTimestamp(chunk.start)}–{formatTimestamp(chunk.end)}
         </span>
-        <span className="min-w-0 flex-1 truncate text-[13px]">{chunkGist(chunk)}</span>
+        <span className="min-w-0 flex-1 truncate text-[13px] text-foreground/85">
+          {chunkGist(chunk)}
+        </span>
         <span className="flex shrink-0 gap-1">
           {present.map((id) => (
             <span
               key={id}
               title={ANALYZER_LABELS[id] ?? id}
-              className={cn('size-2 rounded-sm', ANALYZER_TONES[id]?.bar)}
+              className={cn('size-1.5 rounded-full', ANALYZER_TONES[id]?.bar)}
             />
           ))}
         </span>
@@ -571,7 +574,6 @@ function CompactRow({
 function ChunkCard({
   chunk,
   index,
-  duration,
   isActive,
   isSelected,
   analyzerFilter,
@@ -579,7 +581,6 @@ function ChunkCard({
 }: {
   chunk: ChunkOut
   index: number
-  duration: number
   isActive: boolean
   isSelected: boolean
   analyzerFilter: AnalyzerId | 'all'
@@ -591,85 +592,103 @@ function ChunkCard({
   const scene = chunk.default_video
   const people = chunk.people
   const objects = chunk.object_detection
+  const detections = objects ? readDetections(objects.detections, objects.objects) : []
   const length = chunk.end - chunk.start
 
   return (
     <li
       id={`chunk-${chunk.chunk_id}`}
       className={cn(
-        'group scroll-mt-24 overflow-hidden rounded-xl border bg-card transition-colors',
-        isActive && 'border-primary/50 shadow-sm',
-        isSelected && 'ring-2 ring-primary/30'
+        'scroll-mt-24 rounded-2xl border bg-card/50 transition-colors duration-300',
+        isActive ? 'border-foreground/25 bg-card' : 'border-border/60',
+        isSelected && 'ring-1 ring-foreground/20'
       )}
     >
-      {/* Where this chunk sits in the video — the strip fills as it plays. */}
-      {duration > 0 && (
-        <div className="relative h-0.5 w-full bg-muted">
-          <span
-            className={cn('absolute h-full', isActive ? 'bg-primary' : 'bg-primary/30')}
-            style={{
-              left: `${(chunk.start / duration) * 100}%`,
-              width: `${Math.max(0.3, (length / duration) * 100)}%`,
-            }}
-          />
-        </div>
-      )}
-
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 bg-muted/30 px-4 py-2">
-        <span
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-2 px-5 pt-4">
+        <span className="font-mono text-[11px] tabular-nums text-muted-foreground/70">
+          {String(index + 1).padStart(2, '0')}
+        </span>
+        <button
+          type="button"
+          onClick={() => onSeek(chunk.start)}
+          title="Play from here"
           className={cn(
-            'flex size-7 shrink-0 items-center justify-center rounded-lg text-[11px] font-semibold tabular-nums',
-            isActive ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
+            'inline-flex items-center gap-2 rounded-full py-1 pl-1 pr-3 text-[12.5px] font-medium tabular-nums transition-colors',
+            isActive ? 'bg-foreground text-background' : 'bg-muted/60 hover:bg-muted'
           )}
         >
-          {index + 1}
-        </span>
-        <TimeLink
-          seconds={chunk.start}
-          end={chunk.end}
-          onSeek={onSeek}
-          showIcon
-          className="text-xs font-semibold text-foreground"
-        />
-        <span className="rounded-full bg-background px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground">
-          {length.toFixed(1)}s
-        </span>
-        <span className="text-[10px] text-muted-foreground">id {chunk.chunk_id}</span>
+          <span
+            className={cn(
+              'flex size-5 items-center justify-center rounded-full',
+              isActive ? 'bg-background/20' : 'bg-background'
+            )}
+          >
+            <Play className="size-2.5 translate-x-px fill-current" />
+          </span>
+          {formatTimestamp(chunk.start)} – {formatTimestamp(chunk.end)}
+        </button>
+        <span className="text-[12px] tabular-nums text-muted-foreground">{length.toFixed(1)}s</span>
 
-        <div className="ml-auto flex flex-wrap items-center gap-1">
+        <div className="ml-auto flex flex-wrap items-center gap-3">
           {present.map((id) => (
             <span
               key={id}
-              className={cn(
-                'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium',
-                ANALYZER_TONES[id]?.chip ?? 'bg-muted text-muted-foreground'
-              )}
+              className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground"
               title={id}
             >
-              {ANALYZER_ICONS[id]}
+              <span className={cn('size-1.5 rounded-full', ANALYZER_TONES[id]?.bar)} />
               {ANALYZER_LABELS[id] ?? id}
             </span>
           ))}
         </div>
-      </div>
+      </header>
 
-      <div className="space-y-4 p-4">
-        {present.length === 0 && (
-          <EmptyNote>No analyzer produced output for this chunk.</EmptyNote>
-        )}
+      <div className="space-y-6 px-5 pb-4 pt-4">
+        {present.length === 0 && <EmptyNote>No analyzer produced output for this chunk.</EmptyNote>}
 
         {scene && shows('default_video') && (
           <Block id="default_video">
             {scene.description && (
-              <p className="text-[13px] leading-relaxed">{scene.description}</p>
+              <p className="text-[14px] leading-[1.75] text-foreground/90">{scene.description}</p>
             )}
-            <div className="mt-2.5 space-y-1.5">
-              <FacetRow label="Setting" items={scene.setting ? [scene.setting] : undefined} />
-              <FacetRow label="People" items={scene.people} />
-              <FacetRow label="Actions" items={scene.actions} />
-              <FacetRow label="Objects" items={scene.objects} />
-              <FacetRow label="Tags" items={scene.tags} />
-            </div>
+            <dl className="mt-4 grid grid-cols-[64px_1fr] gap-x-4 gap-y-3 text-[13px]">
+              {scene.setting && (
+                <Facet label="Setting">
+                  <span className="text-foreground/80">{labelOf(scene.setting)}</span>
+                </Facet>
+              )}
+              {(scene.actions ?? []).length > 0 && (
+                <Facet label="Actions">
+                  <ul className="space-y-1">
+                    {(scene.actions ?? []).map((action, actionIndex) => (
+                      <li key={actionIndex} className="flex gap-2 text-foreground/80">
+                        <span className="mt-[9px] size-1 shrink-0 rounded-full bg-muted-foreground/50" />
+                        {labelOf(action)}
+                      </li>
+                    ))}
+                  </ul>
+                </Facet>
+              )}
+              {(scene.people ?? []).length > 0 && (
+                <Facet label="People">
+                  <Chips items={(scene.people ?? []).map(labelOf)} tone="outline" />
+                </Facet>
+              )}
+              {(scene.objects ?? []).length > 0 && (
+                <Facet label="Objects">
+                  <Chips items={(scene.objects ?? []).map(labelOf)} tone="outline" />
+                </Facet>
+              )}
+              {(scene.tags ?? []).length > 0 && (
+                <Facet label="Tags">
+                  <div className="flex flex-wrap gap-x-2.5 gap-y-1 pt-0.5 text-[12px] text-muted-foreground">
+                    {(scene.tags ?? []).map((tag, tagIndex) => (
+                      <span key={`${tag}-${tagIndex}`}>#{labelOf(tag).replace(/\s+/g, '-')}</span>
+                    ))}
+                  </div>
+                </Facet>
+              )}
+            </dl>
           </Block>
         )}
 
@@ -687,26 +706,27 @@ function ChunkCard({
             {(chunk.diarization.turns ?? []).length === 0 ? (
               <EmptyNote>No speech in this chunk.</EmptyNote>
             ) : (
-              <ul className="space-y-1.5">
+              <ul className="space-y-3">
                 {(chunk.diarization.turns ?? []).map((turn, turnIndex) => (
-                  <li
-                    key={`${turn.start}-${turnIndex}`}
-                    className="flex items-start gap-2 rounded-lg bg-muted/40 px-2.5 py-1.5"
-                  >
+                  <li key={`${turn.start}-${turnIndex}`} className="flex items-start gap-3">
                     <span
                       className={cn(
-                        'mt-1 size-2 shrink-0 rounded-full',
+                        'mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-white',
                         speakerTone(turn.speaker)
                       )}
-                    />
+                    >
+                      {speakerInitial(turn.speaker)}
+                    </span>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-baseline gap-2">
-                        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        <span className="text-[12px] font-medium">
                           {turn.speaker?.replace(/^SPEAKER_/, 'Speaker ') ?? 'Unattributed'}
                         </span>
                         <TimeLink seconds={turn.start} end={turn.end} onSeek={onSeek} />
                       </div>
-                      <p className="text-[13px] leading-snug">{turn.text}</p>
+                      <p className="mt-0.5 text-[13.5px] leading-relaxed text-foreground/85">
+                        {turn.text}
+                      </p>
                     </div>
                   </li>
                 ))}
@@ -718,9 +738,9 @@ function ChunkCard({
         {chunk.transcript && shows('transcript') && (
           <Block id="transcript">
             {chunk.transcript.text?.trim() ? (
-              <p className="rounded-lg bg-muted/40 px-2.5 py-2 text-[13px] leading-relaxed">
+              <blockquote className="border-l-2 border-border pl-4 text-[13.5px] leading-relaxed text-foreground/85">
                 {chunk.transcript.text}
-              </p>
+              </blockquote>
             ) : (
               <EmptyNote>No speech in this chunk.</EmptyNote>
             )}
@@ -730,28 +750,31 @@ function ChunkCard({
         {chunk.ocr && shows('ocr') && (
           <Block id="ocr">
             {chunk.ocr.summary && (
-              <p className="mb-2 text-[13px] leading-relaxed text-muted-foreground">
+              <p className="mb-3 text-[13px] leading-relaxed text-foreground/80">
                 {chunk.ocr.summary}
               </p>
             )}
             {(chunk.ocr.texts ?? []).length === 0 ? (
               <EmptyNote>No text detected on screen.</EmptyNote>
             ) : (
-              <ul className="flex flex-wrap gap-1.5">
-                {(chunk.ocr.texts ?? []).map((entry, textIndex) => (
-                  <li
-                    key={textIndex}
-                    className="rounded-md border border-amber-500/30 bg-amber-500/5 px-2 py-1"
-                    title={entry.context}
-                  >
-                    <span className="font-mono text-[12px] leading-none">{entry.text}</span>
-                    {entry.context && (
-                      <span className="mt-0.5 block text-[10px] text-muted-foreground">
-                        {entry.context}
+              <ul className="grid gap-2 sm:grid-cols-2">
+                {(chunk.ocr.texts ?? []).map((entry, textIndex) => {
+                  const parsed = asRecord(parseLoose(entry.text))
+                  const text = str(parsed.text) || labelOf(entry.text)
+                  const context = str(entry.context) || str(parsed.context)
+                  return (
+                    <li key={textIndex} className="rounded-xl bg-muted/40 px-3.5 py-2.5">
+                      <span className="font-mono text-[12.5px] leading-snug text-foreground">
+                        {text}
                       </span>
-                    )}
-                  </li>
-                ))}
+                      {context && (
+                        <span className="mt-1 block text-[12px] leading-snug text-muted-foreground">
+                          {context}
+                        </span>
+                      )}
+                    </li>
+                  )
+                })}
               </ul>
             )}
           </Block>
@@ -760,9 +783,7 @@ function ChunkCard({
         {people && shows('people') && (
           <Block
             id="people"
-            note={
-              people.people_count !== undefined ? `${people.people_count} detected` : undefined
-            }
+            note={people.people_count !== undefined ? `${people.people_count} detected` : undefined}
           >
             {(people.people ?? []).length === 0 ? (
               <EmptyNote>Nobody described in this chunk.</EmptyNote>
@@ -771,7 +792,7 @@ function ChunkCard({
                 {(people.people ?? []).map((person, personIndex) => (
                   <PersonCard
                     key={personIndex}
-                    person={person as Record<string, unknown>}
+                    person={asRecord(parseLoose(person))}
                     index={personIndex}
                   />
                 ))}
@@ -781,24 +802,29 @@ function ChunkCard({
         )}
 
         {objects && shows('object_detection') && (
-          <Block id="object_detection">
-            {(objects.detections ?? []).length === 0 ? (
-              <Chips items={objects.objects ?? []} tone="outline" />
+          <Block
+            id="object_detection"
+            note={detections.length ? `${detections.length} found` : undefined}
+          >
+            {detections.length === 0 ? (
+              <EmptyNote>No objects described in this chunk.</EmptyNote>
             ) : (
-              <ul className="space-y-1.5">
-                {(objects.detections ?? []).map((detection, detectionIndex) => (
-                  <li
-                    key={detectionIndex}
-                    className="rounded-lg border-l-2 border-rose-500/40 bg-rose-500/5 py-1 pl-2.5 text-[13px] leading-snug"
-                  >
-                    <span className="font-medium">{detection.object}</span>
-                    {detection.description && (
-                      <span className="text-muted-foreground"> — {detection.description}</span>
+              <ul className="grid gap-2 sm:grid-cols-2">
+                {detections.map((detection, detectionIndex) => (
+                  <li key={detectionIndex} className="rounded-xl bg-muted/40 px-3.5 py-3">
+                    <div className="flex items-center gap-2">
+                      <span className="size-1.5 shrink-0 rounded-full bg-rose-400" />
+                      <span className="text-[13px] font-medium">{detection.object}</span>
+                    </div>
+                    {detection.appearance && (
+                      <p className="mt-1.5 text-[12.5px] leading-relaxed text-foreground/75">
+                        {detection.appearance}
+                      </p>
                     )}
-                    {(detection as Record<string, any>).context && (
-                      <span className="block text-[12px] text-muted-foreground">
-                        {(detection as Record<string, any>).context}
-                      </span>
+                    {detection.context && (
+                      <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
+                        {detection.context}
+                      </p>
                     )}
                   </li>
                 ))}
@@ -823,37 +849,29 @@ function Block({
   children: React.ReactNode
 }) {
   return (
-    <div className={cn('border-l-2 pl-3', ANALYZER_TONES[id]?.ring ?? 'border-muted')}>
-      <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-        {ANALYZER_ICONS[id]}
+    <section>
+      <div className="mb-2.5 flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+        <span className={cn('[&_svg]:size-3.5', ANALYZER_TONES[id]?.text)}>
+          {ANALYZER_ICONS[id]}
+        </span>
         {ANALYZER_LABELS[id] ?? id}
-        {note && <span className="font-normal normal-case tracking-normal">· {note}</span>}
+        {note && (
+          <span className="font-normal normal-case tracking-normal text-muted-foreground/70">
+            · {note}
+          </span>
+        )}
       </div>
       {children}
-    </div>
+    </section>
   )
 }
 
-function FacetRow({ label, items }: { label: string; items?: string[] }) {
-  if (!items || items.length === 0) return null
-
+function Facet({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex flex-wrap items-baseline gap-1.5">
-      <span className="w-14 shrink-0 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
-        {label}
-      </span>
-      {items.map((item, index) => (
-        <span
-          key={`${item}-${index}`}
-          className={cn(
-            'rounded-md px-1.5 py-0.5 text-[11px] leading-snug',
-            FACET_TONES[label] ?? 'bg-muted text-muted-foreground'
-          )}
-        >
-          {item}
-        </span>
-      ))}
-    </div>
+    <>
+      <dt className="pt-0.5 text-[12px] text-muted-foreground">{label}</dt>
+      <dd className="min-w-0">{children}</dd>
+    </>
   )
 }
 
@@ -863,35 +881,40 @@ function FacetRow({ label, items }: { label: string; items?: string[] }) {
  * within this chunk, not an identity across the video.
  */
 function PersonCard({ person, index }: { person: Record<string, unknown>; index: number }) {
-  const known = ['box_id', 'appearance', 'clothing', 'role', 'action']
+  const known = ['box_id', 'appearance', 'clothing', 'role', 'action', 'description']
   const extra = Object.fromEntries(
     Object.entries(person).filter(([key]) => !known.includes(key) && key !== 'locations')
   )
 
   return (
-    <li className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-2.5">
+    <li className="rounded-xl bg-muted/40 px-3.5 py-3">
       <div className="flex items-center gap-2">
-        <span className="flex size-6 items-center justify-center rounded-full bg-emerald-500/15 text-[10px] font-semibold tabular-nums text-emerald-700 dark:text-emerald-300">
+        <span className="flex size-5 items-center justify-center rounded-full bg-emerald-500/15 text-[10px] font-semibold tabular-nums text-emerald-600 dark:text-emerald-300">
           {(person.box_id as number) ?? index + 1}
         </span>
-        {Boolean(person.role) && (
-          <span className="text-[12px] font-medium capitalize">{String(person.role)}</span>
-        )}
+        <span className="text-[13px] font-medium capitalize">
+          {person.role ? labelOf(person.role) : `Person ${index + 1}`}
+        </span>
       </div>
-      <dl className="mt-1.5 space-y-1">
+      {Boolean(person.description) && (
+        <p className="mt-1.5 text-[12.5px] leading-relaxed text-foreground/75">
+          {labelOf(person.description)}
+        </p>
+      )}
+      <dl className="mt-2 space-y-1">
         {(['clothing', 'appearance', 'action'] as const).map((key) =>
           person[key] ? (
             <div key={key} className="flex gap-2">
-              <dt className="w-16 shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
-                {key}
-              </dt>
-              <dd className="min-w-0 flex-1 text-[12px] leading-snug">{String(person[key])}</dd>
+              <dt className="w-16 shrink-0 text-[11px] capitalize text-muted-foreground">{key}</dt>
+              <dd className="min-w-0 flex-1 text-[12.5px] leading-snug text-foreground/80">
+                {labelOf(person[key])}
+              </dd>
             </div>
           ) : null
         )}
       </dl>
       {Object.keys(extra).length > 0 && (
-        <div className="mt-2 border-t border-emerald-500/20 pt-1.5">
+        <div className="mt-2 border-t border-border/50 pt-2">
           <JsonView value={extra} depth={1} />
         </div>
       )}

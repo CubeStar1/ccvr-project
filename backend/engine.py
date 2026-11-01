@@ -499,8 +499,8 @@ def _strings(values: Any) -> list[str]:
     out = []
     for value in values or []:
         if isinstance(value, dict):
-            value = value.get("description") or value.get("name") or value.get("label") \
-                or json.dumps(value)
+            value = value.get("object") or value.get("name") or value.get("label") \
+                or value.get("description") or json.dumps(value)
         out.append(str(value))
     return out
 
@@ -534,9 +534,17 @@ def chunk_out(video_id: str, chunk: dict[str, Any], docs: dict[str, Any],
                       for p in s.get("people") or []]
             out[analyzer] = {"people": people, "people_count": len(people), "summary": text}
         else:
-            objects = _strings(s.get("objects"))
-            out[analyzer] = {"detections": [{"object": o} for o in objects],
-                             "objects": objects, "summary": text}
+            raw = s.get("objects") or []
+            objects = _strings(raw)
+            # The vision model describes objects as {object, appearance, context};
+            # keep those fields rather than flattening each one to its name.
+            detections = []
+            for name, item in zip(objects, raw):
+                detail = item if isinstance(item, dict) else {}
+                detections.append({"object": name,
+                                   "description": detail.get("appearance") or detail.get("description"),
+                                   "context": detail.get("context")})
+            out[analyzer] = {"detections": detections, "objects": objects, "summary": text}
     spoken = docs["transcript"].get(i)
     if spoken is not None:
         # VIDRA joins Whisper's word tokens, which carry their own leading spaces.
