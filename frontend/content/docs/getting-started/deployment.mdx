@@ -122,6 +122,12 @@ Import the repository, set **Root Directory** to `frontend`, and add the environ
 If the Vercel domain differs from the `FRONTEND_ORIGINS` you set, update it on the Container App
 — uploads and playback are refused by CORS otherwise.
 
+If the Vercel project can't be linked to the repository — say it lives under a different account —
+`.github/workflows/deploy-frontend.yml` deploys it instead, on every push to `main` that touches
+`frontend/`. It needs three repository secrets: `VERCEL_TOKEN` (from vercel.com/account/tokens),
+and `VERCEL_ORG_ID` and `VERCEL_PROJECT_ID` (from `frontend/.vercel/project.json` after
+`vercel link`).
+
 </Step>
 
 <Step>
