@@ -40,30 +40,54 @@ export async function GET(_request: Request, { params }: { params: Params }) {
 const MAX_TITLE = 200
 
 /**
- * Rename a video. The title lives only on this row: core keys videos by content
- * hash and the agent's tools read titles from here, so nothing else needs telling.
+ * Rename a video or move it to another project. Both live only on this row:
+ * core keys videos by content hash and the agent reads titles and project
+ * membership from here, so nothing else needs telling.
  */
 export async function PATCH(request: Request, { params }: { params: Params }) {
   const { videoId } = await params
-  const { supabase, error } = await loadOwnedVideo(videoId)
+  const { video, supabase, error } = await loadOwnedVideo(videoId)
   if (error) return error
 
-  let body: { title?: unknown } = {}
+  let body: { title?: unknown; projectId?: unknown } = {}
   try {
     body = await request.json()
   } catch {
     return new Response('Expected a JSON body', { status: 400 })
   }
 
-  const title = typeof body.title === 'string' ? body.title.replace(/\s+/g, ' ').trim() : ''
-  if (!title) return new Response('Title cannot be empty', { status: 400 })
-  if (title.length > MAX_TITLE) {
-    return new Response(`Title must be ${MAX_TITLE} characters or fewer`, { status: 400 })
+  const update: { title?: string; project_id?: string } = {}
+
+  if (body.title !== undefined) {
+    const title = typeof body.title === 'string' ? body.title.replace(/\s+/g, ' ').trim() : ''
+    if (!title) return new Response('Title cannot be empty', { status: 400 })
+    if (title.length > MAX_TITLE) {
+      return new Response(`Title must be ${MAX_TITLE} characters or fewer`, { status: 400 })
+    }
+    update.title = title
+  }
+
+  if (body.projectId !== undefined) {
+    if (typeof body.projectId !== 'string') {
+      return new Response('projectId must be a string', { status: 400 })
+    }
+    const { data: project } = await supabase!
+      .from('projects')
+      .select('id')
+      .eq('id', body.projectId)
+      .eq('user_id', video!.user_id)
+      .maybeSingle()
+    if (!project) return new Response('Project not found', { status: 404 })
+    update.project_id = project.id
+  }
+
+  if (Object.keys(update).length === 0) {
+    return new Response('Nothing to update', { status: 400 })
   }
 
   const { data, error: updateError } = await supabase!
     .from('video_core')
-    .update({ title })
+    .update(update)
     .eq('id', videoId)
     .select('*')
     .single()

@@ -32,6 +32,7 @@ import { useProjectVideos } from "@/hooks/use-project-videos";
 import { useSidebar } from "@/components/ui/sidebar";
 import { ModeToggle } from "@/components/global/theme-switcher";
 import { useAgentStore } from "@/app/agent/store/agent-store";
+import { useConversationHistory } from "@/app/agent/hooks/use-conversation-history";
 import { cn } from "@/lib/utils";
 
 interface AgentChatProps {
@@ -56,6 +57,7 @@ export function AgentChat({
   const searchParams = useSearchParams();
 
   const { videos, readyVideos, refetch } = useProjectVideos(projectId ?? "");
+  const history = useConversationHistory();
 
   const { messages, status, sendMessage } = useChat({
     messages: initialMessages,
@@ -63,6 +65,13 @@ export function AgentChat({
     transport: new DefaultChatTransport({
       api: "/api/agent",
     }),
+    onData: (part) => {
+      if (part.type === "data-title") {
+        history.setTitle(id, part.data as string);
+      }
+    },
+    // Moves the conversation to the top of the sidebar, which sorts by activity.
+    onFinish: () => void history.refresh(),
     onError: (error) => {
       console.error("Agent error:", error);
       toast.error("Agent error", { description: error.message });

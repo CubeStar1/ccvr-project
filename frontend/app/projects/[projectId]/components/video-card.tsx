@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   Film,
+  FolderInput,
   Loader2,
   MoreHorizontal,
   Pencil,
@@ -18,12 +19,16 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 import { formatDuration } from '@/lib/core/format'
 import { describeChunking } from '@/lib/core/chunking'
 import type { ProjectVideo } from '@/lib/core/types'
+import type { ProjectSummary } from '@/hooks/use-projects'
 
 interface VideoCardProps {
   video: ProjectVideo
@@ -32,6 +37,8 @@ interface VideoCardProps {
   onReindex: (videoId: string) => void
   onPreview: (video: ProjectVideo) => void
   onRename: (videoId: string, title: string) => void
+  moveTargets: ProjectSummary[]
+  onMove: (videoId: string, target: ProjectSummary) => void
 }
 
 /** The title, swapped for an input while renaming. Enter or blur saves, Escape cancels. */
@@ -140,6 +147,8 @@ export function VideoCard({
   onReindex,
   onPreview,
   onRename,
+  moveTargets,
+  onMove,
 }: VideoCardProps) {
   const [imageFailed, setImageFailed] = useState(false)
   const [isRenaming, setIsRenaming] = useState(false)
@@ -256,6 +265,21 @@ export function VideoCard({
               <PlayCircle className="size-4" />
               Quick preview
             </DropdownMenuItem>
+            {moveTargets.length > 0 && (
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger>
+                  <FolderInput className="size-4" />
+                  Move to
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent className="max-h-72 max-w-56 overflow-y-auto">
+                  {moveTargets.map((target) => (
+                    <DropdownMenuItem key={target.id} onClick={() => onMove(video.id, target)}>
+                      <span className="truncate">{target.name}</span>
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+            )}
             <DropdownMenuItem onClick={() => onReindex(video.id)}>
               <RefreshCw className="size-4" />
               Re-index

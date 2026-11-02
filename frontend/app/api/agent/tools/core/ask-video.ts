@@ -7,8 +7,10 @@ import { resolveScope, titleMap, urlMap, type VideoToolContext } from './scope'
 export function createAskVideoTool(context: VideoToolContext) {
   return tool({
     description:
-      'Ask a question about the project\'s videos and get an answer grounded in what was actually said and shown, plus the source moments. ' +
-      'This is your default for "what / why / how / summarize" questions. It is stronger than searching moments because the question is routed to whichever video-level results can address it — entity narratives for questions about a person, events and chapters for "what happened", statistics for counts — and those contain cross-segment reasoning that reading chunks one at a time cannot recover.',
+      'Ask a question about the project\'s videos and get a written answer plus the source moments it drew on. ' +
+      'It reads each video\'s summary and chapters (first five videos in scope) together with the moments that best match the question, so it is strongest on "what / why / how / summarize" questions that need both the overall picture and specific evidence. ' +
+      'It does not read counts, events, named entities, people tracking or speaker statistics — for those, read the matching result with get_video_insights or get_video_entities. ' +
+      'Its answer is itself a model\'s synthesis: rely on the timestamps in `sources`, not ones that appear only in the answer text.',
     inputSchema: z.object({
       question: z.string().describe('The question, phrased in full'),
       video_ids: z

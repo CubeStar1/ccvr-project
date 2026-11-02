@@ -8,23 +8,31 @@ export default async function ProjectsPage() {
   const user = await getUser()
   const supabase = await createSupabaseServer()
 
-  const { data: projects } = await supabase
-    .from('projects')
-    .select('*')
-    .eq('user_id', user!.id)
-    .order('updated_at', { ascending: false })
-
-  const { data: conversations } = await supabase
-    .from('conversations')
-    .select('id, project_id')
-    .eq('user_id', user!.id)
-    .not('project_id', 'is', null)
-    .order('updated_at', { ascending: false })
+  const [{ data: projects }, { data: conversations }, { data: videos }] = await Promise.all([
+    supabase
+      .from('projects')
+      .select('id, name, description, updated_at')
+      .eq('user_id', user!.id)
+      .order('updated_at', { ascending: false }),
+    supabase
+      .from('conversations')
+      .select('id, title, project_id, updated_at')
+      .eq('user_id', user!.id)
+      .not('project_id', 'is', null)
+      .order('updated_at', { ascending: false }),
+    supabase
+      .from('video_core')
+      .select('id, project_id, poster_url, duration, status')
+      .eq('user_id', user!.id)
+      .order('created_at', { ascending: false }),
+  ])
 
   return (
     <ProjectsPageClient
-      projects={(projects ?? []) as any}
-      conversations={(conversations ?? []) as any}
+      userName={user!.user_metadata?.full_name ?? user!.user_metadata?.name ?? null}
+      projects={projects ?? []}
+      conversations={conversations ?? []}
+      videos={videos ?? []}
     />
   )
 }

@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { VideoCard } from './video-card'
 import type { ProjectVideo } from '@/lib/core/types'
+import type { ProjectSummary } from '@/hooks/use-projects'
 
 const SEARCH_THRESHOLD = 6
 
@@ -17,6 +18,8 @@ interface MediaGridProps {
   onReindex: (videoId: string) => void
   onPreview: (video: ProjectVideo) => void
   onRename: (videoId: string, title: string) => void
+  moveTargets: ProjectSummary[]
+  onMove: (videoId: string, target: ProjectSummary) => void
   onUpload: () => void
 }
 
@@ -28,6 +31,8 @@ export function MediaGrid({
   onReindex,
   onPreview,
   onRename,
+  moveTargets,
+  onMove,
   onUpload,
 }: MediaGridProps) {
   const [search, setSearch] = useState('')
@@ -104,6 +109,8 @@ export function MediaGrid({
                 onReindex={onReindex}
                 onPreview={onPreview}
                 onRename={onRename}
+                moveTargets={moveTargets}
+                onMove={onMove}
               />
             ))}
           </div>

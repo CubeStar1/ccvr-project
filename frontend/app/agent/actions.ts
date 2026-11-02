@@ -65,17 +65,32 @@ export async function generateTitleFromUserMessage({
   message: UIMessage;
   model: string;
 }) {
+  const text = message.parts
+    .map((part) => (part.type === 'text' ? part.text : ''))
+    .join(' ')
+    .trim()
+
   const { text: title } = await generateText({
     model: myProvider.languageModel(model),
-    system: `\n
-    - you will generate a short title based on the first message a user begins a conversation with
-    - ensure it is not more than 80 characters long
-    - the title should be a summary of the user's message
-    - do not use quotes or colons`,
-    prompt: JSON.stringify(message),
+    system: [
+      'You name chat threads in a video-analysis app, where users ask an assistant about their uploaded videos.',
+      'You are given the first message of a thread. Do not answer or respond to it — only write a title for the thread.',
+      'The title is 2-6 words in Title Case, says what the user wanted (e.g. "Man in White Shirt and Yellow Shorts", "Car Fire Moment", "Map Appearances"), and has no quotes, colons or trailing period.',
+      'For a bare greeting, use "Greeting"; for asking what the assistant can do, use "Assistant Capabilities".',
+    ].join(' '),
+    prompt: `First message:\n<<<\n${text}\n>>>`,
   });
 
-  return title;
+  return title.trim().replace(/^["'\s]+|["'\s.]+$/g, '').slice(0, 80) || 'New chat';
+}
+
+export async function updateChatTitle(chatId: string, title: string) {
+  const supabase = await createSupabaseServer()
+  const { error } = await supabase.from('conversations').update({ title }).eq('id', chatId)
+
+  if (error) {
+    console.error('Error updating chat title:', error)
+  }
 }
 
 export async function updateChatUsage(chatId: string, usage: AppUsage) {

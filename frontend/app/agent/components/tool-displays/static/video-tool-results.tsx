@@ -50,9 +50,7 @@ export const VideoSearchResult = memo(function VideoSearchResult({ output }: Res
     <div className="space-y-2">
       <p className="text-xs text-muted-foreground">
         {output?.count ?? 0} moment{output?.count === 1 ? '' : 's'} for “{output?.query}”
-        {output?.analyzer && output.analyzer !== 'default_video' ? ` · ${output.analyzer}` : ''}
-        {output?.field && output.field !== 'combined' ? ` · ${output.field}` : ''}
-      </p>
+        {output?.analyzer && output.analyzer !== 'default_video' ? ` · ${output.analyzer}` : ''}      </p>
       <MomentList moments={output?.moments ?? []} />
       {output?.note && <p className="text-xs italic text-muted-foreground">{output.note}</p>}
       {output?.warning && <ErrorLine message={output.warning} />}

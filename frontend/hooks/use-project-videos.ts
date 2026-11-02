@@ -105,5 +105,33 @@ export function useVideoMutations(projectId: string) {
     },
   })
 
-  return { remove, reindex, reaggregate, rename, invalidate }
+  const move = useMutation({
+    mutationFn: async ({ videoId, targetProjectId }: { videoId: string; targetProjectId: string }) => {
+      const response = await fetch(`/api/videos/${videoId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: targetProjectId }),
+      })
+      if (!response.ok) throw new Error(await response.text())
+    },
+    onMutate: async ({ videoId }) => {
+      const key = projectVideosKey(projectId)
+      await queryClient.cancelQueries({ queryKey: key })
+      const previous = queryClient.getQueryData<ProjectVideo[]>(key)
+      queryClient.setQueryData<ProjectVideo[]>(key, (videos) =>
+        videos?.filter((video) => video.id !== videoId)
+      )
+      return { previous }
+    },
+    onError: (_error, _vars, context) => {
+      if (context?.previous) queryClient.setQueryData(projectVideosKey(projectId), context.previous)
+    },
+    onSettled: (_data, _error, { videoId, targetProjectId }) => {
+      invalidate()
+      queryClient.invalidateQueries({ queryKey: projectVideosKey(targetProjectId) })
+      queryClient.invalidateQueries({ queryKey: ['video-details', videoId] })
+    },
+  })
+
+  return { remove, reindex, reaggregate, rename, move, invalidate }
 }

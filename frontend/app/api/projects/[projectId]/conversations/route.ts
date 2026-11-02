@@ -17,7 +17,7 @@ export async function POST(
 
   const { data: project, error: projectError } = await supabase
     .from('projects')
-    .select('id, user_id, name')
+    .select('id, user_id')
     .eq('id', projectId)
     .single()
 
@@ -25,19 +25,13 @@ export async function POST(
     return new Response('Project not found', { status: 404 })
   }
 
-  const { count } = await supabase
-    .from('conversations')
-    .select('*', { count: 'exact', head: true })
-    .eq('project_id', projectId)
-
-  const title = `${project.name} chat ${(count ?? 0) + 1}`
-
+  // A placeholder until the first message arrives and the agent names the chat.
   const { data: conversation, error: conversationError } = await supabase
     .from('conversations')
     .insert({
       user_id: user.id,
       project_id: projectId,
-      title,
+      title: 'New chat',
     })
     .select()
     .single()

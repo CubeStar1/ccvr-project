@@ -12,7 +12,13 @@ import {
 import { createMyProvider } from '@/app/agent/lib/ai/providers/providers';
 import { getUser } from '@/app/agent/hooks/get-user';
 import { createSupabaseServer } from '@/lib/supabase/server';
-import { saveMessages, getChatById, saveChat, generateTitleFromUserMessage } from '@/app/agent/actions';
+import {
+  saveMessages,
+  getChatById,
+  saveChat,
+  generateTitleFromUserMessage,
+  updateChatTitle,
+} from '@/app/agent/actions';
 import { getSystemPrompt, type VideoContextEntry } from '@/app/agent/lib/ai/system-prompt';
 
 export const maxDuration = 300;
@@ -44,6 +50,8 @@ export async function POST(req: Request) {
     } = await req.json();
 
     const userMessage = messages[messages.length - 1];
+    // The client sends the whole history, so a single message is the opening one.
+    const isFirstMessage = messages.length === 1;
 
     // Create or verify conversation
     if (conversationID) {
@@ -53,15 +61,11 @@ export async function POST(req: Request) {
           return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 });
         }
       } else {
-        const title = await generateTitleFromUserMessage({
-          message: userMessage,
-          model: model || 'gpt-4.1-mini',
-        });
         await saveChat({
           id: conversationID,
           userId: user.id,
           projectId: projectID,
-          title,
+          title: 'New chat',
         });
       }
 
@@ -111,6 +115,18 @@ export async function POST(req: Request) {
 
         result.consumeStream();
         dataStream.merge(result.toUIMessageStream());
+
+        // Name the chat alongside the answer rather than before it, and push the
+        // title down the same stream so the sidebar updates without a refetch.
+        if (conversationID && isFirstMessage) {
+          try {
+            const title = await generateTitleFromUserMessage({ message: userMessage, model });
+            await updateChatTitle(conversationID, title);
+            dataStream.write({ type: 'data-title', data: title, transient: true });
+          } catch (error) {
+            console.error('[Agent] Title generation failed:', error);
+          }
+        }
       },
       onFinish: async ({ messages: generatedMessages }) => {
         if (conversationID && generatedMessages && generatedMessages.length > 0) {

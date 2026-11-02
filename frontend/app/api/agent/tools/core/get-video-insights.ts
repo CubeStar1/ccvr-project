@@ -26,17 +26,17 @@ const AGGREGATORS = [
 ] as const
 
 const CATALOGUE = [
-  '`summary` — a summary of the whole video',
-  '`chapters` — consecutive sections with titles',
-  '`events` — discrete timestamped events with a kind',
-  '`stats` — duration, chunk sizes, frames sampled, speech totals; use for "how long / how many / how often"',
-  '`coverage` — how much of the video each analysis covered',
-  '`ner` — named entities across speech and on-screen text; use for "which brands / who is mentioned / what places"',
-  '`sentiment` — sentiment of speech over time',
+  '`summary` — the whole video in 150+ words, plus its recurring topics, setting and notable moments',
+  '`chapters` — contiguous titled sections with a summary and time span each',
+  '`events` — discrete events (action, arrival, change, speech), each pinned to a timestamp; use for "what happened, in order" and "how many times did X happen"',
+  '`stats` — duration, chunk sizes, frames sampled, speech totals',
+  '`coverage` — how much of the video each analysis covered; use to tell "not present" from "not analysed"',
+  '`ner` — named entities in speech and on-screen text, with where each appears; use for "which brands / who is mentioned / what places"',
+  '`sentiment` — tone per moment and where it turns',
   '`speaker_stats` — talk time, turns, handovers and share per speaker',
-  '`entities` — people linked across the video with narratives, and who appears together',
-  '`object_entities` — objects tracked across chunks',
-  '`text_entities` — on-screen text tracked across chunks',
+  '`entities` — people linked across the video, each with a description and a narrative of what they did',
+  '`object_entities` — objects linked across the video, with where they were and how they were used',
+  '`text_entities` — on-screen text linked across the video, as it most often reads and where it appears',
 ].join('; ')
 
 export function createGetVideoInsightsTool(context: VideoToolContext) {
@@ -44,7 +44,7 @@ export function createGetVideoInsightsTool(context: VideoToolContext) {
     description:
       'Read a video-level result — analysis over the whole video rather than a single moment. Use this instead of retrieving many moments and reasoning over them by hand: counts, summaries, chapter structure, what stands out, who talked most, which brands appear. ' +
       `Available: ${CATALOGUE}. ` +
-      'Call list_project_videos first if you are unsure which of these a video has: one whose analyzer never ran is skipped rather than computed, and asking for it returns what does exist instead.',
+      'Your instructions list which of these each video has under `insights`; asking for one it lacks returns what does exist instead.',
     inputSchema: z.object({
       video_id: z.string().describe('Video id'),
       insight: z

@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { User } from "@supabase/supabase-js";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   FolderGit2,
   Loader2Icon,
@@ -55,7 +55,12 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
+import { RenameProjectDialog } from "@/components/global/rename-project-dialog";
 import type { ProjectHistoryItem } from "@/app/agent/types";
+import {
+  CONVERSATION_HISTORY_KEY,
+  useConversationHistory,
+} from "@/app/agent/hooks/use-conversation-history";
 
 function ConversationRow({
   projectId,
@@ -139,8 +144,9 @@ function ConversationRow({
 export function AgentSidebarHistory({ user }: { user: User | undefined }) {
   const params = useParams();
   const router = useRouter();
-  const queryClient = useQueryClient();
+  const history = useConversationHistory();
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [renamingProject, setRenamingProject] = useState<{ id: string; name: string } | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
   const currentConversationId = typeof params?.conversationId === "string"
@@ -151,7 +157,7 @@ export function AgentSidebarHistory({ user }: { user: User | undefined }) {
   const currentProjectId = typeof params?.projectId === "string" ? params.projectId : "";
 
   const { data, isLoading } = useQuery({
-    queryKey: ["agent-project-history", user?.id],
+    queryKey: [...CONVERSATION_HISTORY_KEY, user?.id],
     queryFn: async () => {
       const res = await fetch("/api/agent/history");
       if (!res.ok) throw new Error("Failed to load project history");
@@ -167,7 +173,7 @@ export function AgentSidebarHistory({ user }: { user: User | undefined }) {
       return conversationId;
     },
     onSuccess: (deletedConversationId) => {
-      queryClient.invalidateQueries({ queryKey: ["agent-project-history", user?.id] });
+      void history.refresh();
       toast.success("Conversation deleted");
       if (deletedConversationId === currentConversationId) {
         router.push("/projects");
@@ -188,7 +194,7 @@ export function AgentSidebarHistory({ user }: { user: User | undefined }) {
       return { conversationId, title };
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["agent-project-history", user?.id] });
+      void history.refresh();
       toast.success("Conversation renamed");
     },
     onError: () => {
@@ -247,7 +253,11 @@ export function AgentSidebarHistory({ user }: { user: User | undefined }) {
               <Collapsible key={item.project.id} asChild defaultOpen className="group/collapsible">
                 <SidebarMenuItem>
                   <CollapsibleTrigger asChild>
-                    <SidebarMenuButton tooltip={item.project.name} isActive={item.project.id === currentProjectId}>
+                    <SidebarMenuButton
+                      tooltip={item.project.name}
+                      isActive={item.project.id === currentProjectId}
+                      className="group-has-data-[sidebar=menu-action]/menu-item:pr-14"
+                    >
                       <ChevronRight className="transition-transform group-data-[state=open]/collapsible:rotate-90" />
                       <FolderGit2 className="size-4 shrink-0" />
                       <span className="truncate">{item.project.name}</span>
@@ -265,6 +275,20 @@ export function AgentSidebarHistory({ user }: { user: User | undefined }) {
                   >
                     <PlusIcon className="size-4" />
                   </SidebarMenuAction>
+
+                  <DropdownMenu modal>
+                    <DropdownMenuTrigger asChild>
+                      <SidebarMenuAction showOnHover className="right-7" title="Project options">
+                        <MoreHorizontalIcon className="size-4" />
+                      </SidebarMenuAction>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent side="bottom" align="end">
+                      <DropdownMenuItem onClick={() => setRenamingProject(item.project)}>
+                        <PencilIcon className="size-4" />
+                        <span>Rename</span>
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
 
                   <CollapsibleContent>
                     <SidebarMenuSub>
@@ -309,6 +333,13 @@ export function AgentSidebarHistory({ user }: { user: User | undefined }) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <RenameProjectDialog
+        projectId={renamingProject?.id ?? ""}
+        currentName={renamingProject?.name ?? ""}
+        open={Boolean(renamingProject)}
+        onOpenChange={(open) => !open && setRenamingProject(null)}
+      />
     </>
   );
 }

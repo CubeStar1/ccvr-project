@@ -21,14 +21,17 @@ import { resolveScope, titleMap, urlMap, type VideoToolContext } from './scope'
  * result set to nothing. Prose in the tool description did not stop it. The
  * semantic query already covers what those filters were being used to express,
  * so removing the parameter removes the failure mode outright.
+ *
+ * `field` and `score_threshold` are left out for a plainer reason: the backend
+ * ignores both. Scores are a rank fusion, not a similarity, so no threshold on
+ * them could mean "absent" anyway.
  */
 export function createSearchMomentsTool(context: VideoToolContext) {
   return tool({
     description:
-      'Find moments in the project\'s analysed videos using natural language. Returns timestamped moments you can pass to show_clips. ' +
-      'The query is matched semantically against the whole record, so descriptions of appearance, clothing, actions, objects and setting all belong in `query` as a full phrase. ' +
-      'Use `analyzer` to pick which pass to search (`default_video` for what is shown, `diarization`/`transcript` for what is said, `ocr` for on-screen text, `people` for who is present, `object_detection` for objects), ' +
-      'and `field` to compare against one part of a record instead of the whole thing, so a short precise match is not diluted.',
+      "Find moments in the project's analysed videos using natural language. Returns timestamped moments, ranked, that you can pass to show_clips or read in full with read_chunks. " +
+      'The query is matched semantically against everything recorded for each moment — what is shown, said and written on screen — so put appearance, clothing, actions, objects, setting and any quoted words in `query` as one full phrase. ' +
+      'Use it to locate specifics; it sees one moment at a time, so it cannot answer counts, totals or whole-video questions (use get_video_insights for those).',
     inputSchema: z.object({
       query: z
         .string()
@@ -38,31 +41,12 @@ export function createSearchMomentsTool(context: VideoToolContext) {
         .optional()
         .describe('Restrict to these video ids. Omit to search every searchable video.'),
       analyzer: z
-        .enum([
-          'default_video',
-          'transcript',
-          'diarization',
-          'ocr',
-          'people',
-          'object_detection',
-        ])
+        .enum(['default_video', 'ocr', 'people', 'object_detection'])
         .default('default_video')
-        .describe('Which analysis pass to search. Must be one the video actually ran.'),
-      field: z
-        .enum(['combined', 'description', 'people', 'actions', 'objects'])
-        .default('combined')
         .describe(
-          'Which part of the record to compare against. `combined` is the whole thing; the others match one part only. A chunk missing that part is excluded rather than matched on empty text.'
+          '`default_video` searches everything recorded, speech included — the right choice almost always. `ocr`, `people` or `object_detection` narrow the search to frames sampled for on-screen text, people or objects; use one only when the query is purely about that and the video ran it.'
         ),
       limit: z.number().int().min(1).max(25).default(8),
-      score_threshold: z
-        .number()
-        .min(0)
-        .max(1)
-        .optional()
-        .describe(
-          'Leave this unset for a normal search: correct matches routinely score 0.55-0.60, so a threshold deletes them. Set it only when the user is asking whether something is absent and an empty result has to mean "not present".'
-        ),
       detail: z
         .enum(['minimal', 'standard'])
         .default('standard')
@@ -70,7 +54,7 @@ export function createSearchMomentsTool(context: VideoToolContext) {
           'Use `minimal` when you intend to follow up with read_chunks on the few that matter — it returns ids, timecodes and a short snippet at a fraction of the context cost.'
         ),
     }),
-    execute: async ({ query, video_ids, analyzer, field, limit, score_threshold, detail }) => {
+    execute: async ({ query, video_ids, analyzer, limit, detail }) => {
       const { ids, videos, note } = await resolveScope(context, video_ids)
       if (ids.length === 0) return { moments: [], note: note ?? 'Nothing searchable here yet.' }
 
@@ -82,9 +66,7 @@ export function createSearchMomentsTool(context: VideoToolContext) {
           text: query,
           video_ids: ids,
           analyzer,
-          field,
           limit,
-          score_threshold: score_threshold ?? null,
           detail,
           // The chat message does the explaining; a second model call here would
           // pay for prose the agent is about to rewrite anyway.
@@ -94,7 +76,6 @@ export function createSearchMomentsTool(context: VideoToolContext) {
         return {
           query,
           analyzer,
-          field,
           count: result.results.length,
           moments: result.results.map((hit) => ({
             video_id: hit.video_id,
@@ -121,7 +102,7 @@ export function createSearchMomentsTool(context: VideoToolContext) {
           ...(note ? { warning: note } : {}),
           ...(result.results.length === 0
             ? {
-                note: 'No matching moments. Try rephrasing, dropping the score_threshold, or a different analyzer — this one may not have run on these videos.',
+                note: 'No matching moments. Try rephrasing with more visual detail, or the default analyzer — a narrower one may not have run on these videos.',
               }
             : {}),
         }

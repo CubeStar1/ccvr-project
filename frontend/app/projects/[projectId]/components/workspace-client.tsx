@@ -3,7 +3,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { ArrowUp, Clock, Film, Loader2, PanelLeft, Plus } from 'lucide-react'
+import { ArrowUp, Clock, Film, Loader2, PanelLeft, Pencil, Plus } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -14,6 +14,9 @@ import { VideoPlayer } from '@/app/agent/components/video-player'
 import { VideoPicker, VideoChips } from '@/app/agent/components/video-picker'
 import { VoiceInputButton } from '@/app/agent/components/voice-input-button'
 import { useProjectVideos, useVideoMutations } from '@/hooks/use-project-videos'
+import { useConversationHistory } from '@/app/agent/hooks/use-conversation-history'
+import { useProjects } from '@/hooks/use-projects'
+import { RenameProjectDialog } from '@/components/global/rename-project-dialog'
 import { formatDuration, formatTimestamp } from '@/lib/core/format'
 import type { Project } from '@/app/agent/types'
 import type { ProjectVideo } from '@/lib/core/types'
@@ -33,11 +36,18 @@ export function WorkspaceClient({ project, initialVideos }: WorkspaceClientProps
   const [uploadOpen, setUploadOpen] = useState(false)
   const [preview, setPreview] = useState<ProjectVideo | null>(null)
   const [isStarting, setIsStarting] = useState(false)
+  const [renameOpen, setRenameOpen] = useState(false)
   const [selectedVideoIds, setSelectedVideoIds] = useState<string[]>([])
   const promptRef = useRef<HTMLTextAreaElement>(null)
 
   const { videos, readyVideos, isLoading } = useProjectVideos(project.id, initialVideos)
-  const { remove, reindex, rename, invalidate } = useVideoMutations(project.id)
+  const { remove, reindex, rename, move, invalidate } = useVideoMutations(project.id)
+  const history = useConversationHistory()
+  const { data: projects } = useProjects()
+  const moveTargets = useMemo(
+    () => (projects ?? []).filter((item) => item.id !== project.id),
+    [projects, project.id]
+  )
 
   /** How much footage is actually searchable — the only number worth surfacing up top. */
   const indexedSeconds = useMemo(
@@ -125,6 +135,7 @@ export function WorkspaceClient({ project, initialVideos }: WorkspaceClientProps
       if (!response.ok) throw new Error(await response.text())
 
       const { conversationId } = await response.json()
+      void history.refresh()
       const params = new URLSearchParams({ q: message })
       // Whatever the user tagged, or every ready video if they tagged nothing.
       const scope =
@@ -159,7 +170,16 @@ export function WorkspaceClient({ project, initialVideos }: WorkspaceClientProps
       <div className="mx-auto max-w-5xl px-4 pb-20 pt-14 sm:px-6 sm:pt-20">
         <div className="mx-auto max-w-2xl text-center">
           <h1 className="text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
-            {project.name}
+            <span className="group/title relative">
+              {project.name}
+              <button
+                onClick={() => setRenameOpen(true)}
+                title="Rename project"
+                className="absolute -right-9 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 group-hover/title:opacity-100"
+              >
+                <Pencil className="size-4" />
+              </button>
+            </span>
           </h1>
           {project.description && (
             <p className="mt-2 text-sm text-muted-foreground">{project.description}</p>
@@ -262,6 +282,23 @@ export function WorkspaceClient({ project, initialVideos }: WorkspaceClientProps
               }
             )
           }
+          moveTargets={moveTargets}
+          onMove={(videoId, target) =>
+            move.mutate(
+              { videoId, targetProjectId: target.id },
+              {
+                onSuccess: () =>
+                  toast.success(`Moved to ${target.name}`, {
+                    action: {
+                      label: 'Open',
+                      onClick: () => router.push(`/projects/${target.id}`),
+                    },
+                  }),
+                onError: (error: any) =>
+                  toast.error('Could not move video', { description: error.message }),
+              }
+            )
+          }
           onUpload={() => setUploadOpen(true)}
           onDelete={(videoId) =>
             remove.mutate(videoId, {
@@ -277,6 +314,13 @@ export function WorkspaceClient({ project, initialVideos }: WorkspaceClientProps
           }
         />
       </div>
+
+      <RenameProjectDialog
+        projectId={project.id}
+        currentName={project.name}
+        open={renameOpen}
+        onOpenChange={setRenameOpen}
+      />
 
       <UploadDialog
         projectId={project.id}
