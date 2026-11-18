@@ -1,0 +1,190 @@
+% Keep the TeX year register available for PGF; the template redefines \year.
+\let\CalendarYear\year
+\documentclass{ieeeaccess}
+\let\year\CalendarYear
+\usepackage{cite}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs,tabularx}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning}
+\usepackage[hidelinks]{hyperref}
+
+% The supplied IEEE Access class expects this dimension even for TikZ figures.
+\makeatletter
+\@ifundefined{xfigwd}{\newdimen\xfigwd}{}
+% Preserve the template headers without implying that this draft is published.
+\let\access@titlepage\ps@titlepage
+\let\access@headings\ps@headings
+\newcommand{\draft@footers}{%
+  \def\@oddfoot{\normalfont\scriptsize MANUSCRIPT DRAFT\hfill\thepage}%
+  \def\@evenfoot{\normalfont\scriptsize\thepage\hfill MANUSCRIPT DRAFT}}
+\def\ps@titlepage{\access@titlepage\draft@footers}
+\def\ps@headings{\access@headings\draft@footers}
+\makeatother
+\setlength{\xfigwd}{0pt}
+% Reserve room inside the title block for the template's abstract bullets.
+\newlength{\paperabstractwidth}
+\setlength{\paperabstractwidth}{\dimexpr\titlewidth-10pt\relax}
+\let\abstractwidth\paperabstractwidth
+
+\begin{document}
+\history{Manuscript draft.}
+\doi{not assigned}
+
+\title{FalconVQA: Timestamp-Grounded Search and Question Answering for Video Repositories}
+\author{VISHAL K. BHAT\authorrefmark{1},
+TALLAM SRI SAI SUBRAMANYAM\authorrefmark{1},
+MEDHA SANKETH\authorrefmark{1}, \mbox{AND AVINASH ANISH\authorrefmark{2}}}
+\address[1]{Department of Computer Science and Engineering, RV College of Engineering, Bengaluru 560059, India}
+\address[2]{Department of Information Science and Engineering, RV College of Engineering, Bengaluru 560059, India}
+\corresp{Correspondence: Vishal K. Bhat (e-mail: vishalkbhat.cs23@rvce.edu.in).}
+\markboth{Bhat \MakeLowercase{\textit{et al.}}: FalconVQA}{Bhat \MakeLowercase{\textit{et al.}}: FalconVQA}
+
+\begin{abstract}
+Finding an event in a video repository requires locating the evidence in the recording, not merely identifying the file or generating a plausible description. We present FalconVQA, a system that indexes timestamped visual descriptions and speech transcripts, retrieves ranked video intervals, and presents evidence as playable clips. Its VIDRA pipeline produces two views of a recording: a moment index for local evidence and video-level aggregates for broader questions. A conversational interface retrieves from the user's project and presents answers alongside source intervals. In a component pilot on an Apple M2, scene-based segmentation matched all nine deliberately abrupt transitions across three synthetic videos within 250~ms and took 47.8~ms per video at the median. The fixed 20-s grid matched none of the deliberately off-grid transitions. Local retrieval over 100, 1,000, and 5,000 synthetic 1,536-dimensional vectors took 12.2, 144.4, and 770.9~ms at the median, respectively, excluding query embedding and network traffic. These measurements characterize two components, not semantic retrieval accuracy or end-to-end answer quality. We distinguish them from exploratory measurements of an earlier backend and specify how to evaluate the current system on real footage with human-annotated evidence.
+\end{abstract}
+
+\begin{keywords}
+Multimodal retrieval, retrieval-augmented generation, temporal grounding, video moment retrieval, video question answering.
+\end{keywords}
+
+\titlepgskip=-15pt
+\maketitle
+\pagestyle{headings}
+
+\section{Introduction}
+\label{sec:intro}
+\PARstart{A}{n} operator reviewing an archive may know that a delivery was discussed, or that a container was moved, without knowing the recording or the timestamp. Filename and date filters do not express such a request. A transcript can locate spoken content but cannot describe a silent action; a frame-based description can record visible objects but omit speech, timing, or the relationship between two actions. A search interface must therefore handle both modalities and make it possible to verify where an answer came from.
+
+Video moment retrieval and video question answering address different parts of this problem. The first returns a time interval for a description, while the second returns a textual response that can require reasoning over several intervals \cite{qvhighlights,nextqa,egoschema}. In repository search, a query may also span several recordings, and a user may want to inspect the original footage before acting on an answer. We treat \emph{the playable interval}, not the generated text alone, as the primary unit of evidence.
+
+FalconVQA combines an offline indexing pipeline with an interactive retrieval interface. Rather than processing raw video for every question, it aligns picture and speech to a shared timeline and indexes short representations of that evidence. The query service can retrieve moments directly or combine them with precomputed summaries and chapters. A separate application layer translates conversational requests into scoped tool calls and renders the selected intervals.
+
+This work makes three contributions:
+\begin{enumerate}
+\item An implemented video indexing pipeline with a shared temporal representation for visual descriptions, speech, and video-level aggregates.
+\item A repository workflow in which retrieval results preserve recording identity and playable time bounds, and video tools resolve evidence within the current project.
+\item A reproducible component pilot that measures the costs of segmentation and file-backed retrieval, plus an evaluation protocol that distinguishes moment localization, answer correctness, and citation support.
+\end{enumerate}
+The contribution is the design and characterization of the system. We do not claim a new foundation model, state-of-the-art retrieval accuracy, or validated operation at archive scale.
+
+\section{Related Work}
+\label{sec:related}
+\subsection{Temporal localization and video question answering}
+QVHighlights provides free-form queries, annotated moments, and saliency labels, and introduces Moment-DETR, which predicts intervals directly \cite{qvhighlights}. FalconVQA instead retrieves precomputed chunks. This enables reuse across questions, but observed events can begin or end inside a returned chunk. NExT-QA emphasizes temporal and causal reasoning about actions \cite{nextqa}. EgoSchema further distinguishes video length from the amount of evidence needed to answer a question \cite{egoschema}. These settings motivate testing not only whether the answer is correct, but also whether the cited portion is sufficient to verify it.
+
+\subsection{Retrieval-augmented generation for video}
+Retrieval-augmented generation conditions a generator on documents from an external index \cite{lewis}. Video-RAG retrieves auxiliary text from audio, OCR, and object detections and feeds it to a video-language model alongside video frames \cite{videorag}. FalconVQA shares the use of derived evidence but targets repeated queries over an indexed repository. Its backend synthesis operates on stored descriptions, transcripts, and aggregates; the application returns the original footage separately for inspection. This avoids decoding it during retrieval, but limits the answer to information captured at ingest time.
+
+\section{System Architecture}
+\label{sec:architecture}
+\input{figures}
+
+Fig.~\ref{fig:architecture} separates the ingestion and query paths. The application manages accounts, projects, conversation history, and per-project video records in Supabase. A FastAPI service accepts ingest jobs, exposes analytical artifacts, and serves moment search and question answering over VIDRA. Media and analytical artifacts are written to local storage, or mirrored to Azure Blob Storage when configured. The deployed backend uses local disk as a cache for remote analytical artifacts. The application database is not the active vector index.
+
+\subsection{Ingestion, identity, and lifecycle}
+A source is either a direct video URL or an uploaded file. In the latter case the browser obtains a temporary upload URL, writes the bytes to storage, and submits the upload identifier to the backend. The service identifies media by a truncated SHA-256 digest of its bytes; this identifier names the analytical record. The application maintains a separate video row and uses the ingest job result to associate it with the analytical record. During processing, the application polls the backend and reconciles job progress or failure into the project view. A completed record provides the playback URL, duration, and availability of analyses.
+
+The backend serializes ingest jobs in one worker. It persists job state but does not persist the executable queue: work interrupted by a process restart is not automatically resumed. The deployment separates media transfer from the application server and reuses derived artifacts for queries. It does not imply that ingestion scales horizontally or that first-use retrieval avoids storage latency.
+
+\subsection{Project scope and playback}
+Retrieval tools resolve the user's ready recordings in the active project before passing explicit video identifiers to the backend. A user can tag videos to guide the model's selection; the server-side project check, not the tag or prompt, establishes which project videos can be retrieved. The backend itself does not manage tenant identities. The application and database therefore enforce project ownership, while the backend supports a deployment-level service token. Direct media access is a separate control and should not be inferred from project isolation in the chat interface.
+
+A retrieved moment carries a recording identifier and start and end times in media seconds. The clip reel seeks to the start of each interval on the source media and advances at its end. The application can replay several ranges from one source without pre-rendering each one as a separate file. This makes a retrieval result inspectable; it does not certify that a generated statement is correct.
+
+\section{Methodology}
+\label{sec:method}
+\subsection{Segmentation and evidence extraction}
+Let a recording $v$ have duration $T_v$ and a timeline with edges $0=b_0<b_1<\cdots<b_m=T_v$. Its $i$th chunk is $c_i=(v,[b_i,b_{i+1}))$, where $0\leq i<m$. The key $(v,i)$ is necessary because chunk indices are local to a recording. The current backend maps the user's ingest settings to one VIDRA segmentation policy per run (Table~\ref{tab:policies}). In weighted mode, the strongest requested signal selects a policy; the deployed adapter does not fuse the four signals used in the earlier backend. If the selected policy requires an unavailable media stream, ingestion can fall back to a fixed grid.
+
+\begin{table}[!t]
+\caption{Segmentation Policies in the Current Pipeline}
+\label{tab:policies}
+\centering
+\small
+\begin{tabularx}{\columnwidth}{@{}lX@{}}
+\toprule
+\textbf{Policy} & \textbf{Source of interior boundaries} \\
+\midrule
+Uniform & Arithmetic time grid; no content detector. \\
+Scene & Frame-to-frame color and brightness changes in the sampled visual stream. \\
+VAD & Midpoints of sufficiently long gaps between transcript speech spans. \\
+Speaker & Changes in speaker-labeled turns when those turns are available. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Visual samplers keep frames at regular times or according to cues associated with people, objects, or visible text. The vision-language model produces short descriptions for the selected frames in each chunk. The audio branch aligns Whisper-derived text to the same grid \cite{whisper}; speaker-attributed analysis can additionally use pyannote \cite{pyannote}. If a modality is absent or disabled, the remaining branch can still produce evidence. Neither sampling nor transcription guarantees coverage of brief or ambiguous events, and an event split by a boundary can be harder to express in a single unit.
+
+The pipeline stores a timeline, derived descriptions and transcript artifacts when available, and an embedding index. It then computes video-level products from the derived artifacts rather than replaying the source. Depending on available evidence and the configured computation tier, these can include coverage statistics, a summary, chapters, events, or recurring entities. These outputs support different user requests: ``When is the box moved?'' needs a localized span, while ``What are the main topics?'' benefits from an overview.
+
+\subsection{Dense unit ranking and moment aggregation}
+In the current configuration the text representations are embedded in a shared space. The library supports optional visual embeddings and other storage implementations; the deployed adapter uses the dense-only, file-backed \texttt{Folder} implementation without a visual embedding role. For a query embedding $\mathbf{q}$ and a nonzero unit embedding $\mathbf{x}_j$, the backend ranks units by cosine similarity:
+\begin{equation}
+\operatorname{sim}(\mathbf{q},\mathbf{x}_j)=
+\frac{\mathbf{q}^{\mathsf T}\mathbf{x}_j}
+{\lVert\mathbf{q}\rVert_2\,\lVert\mathbf{x}_j\rVert_2}.
+\label{eq:cosine}
+\end{equation}
+The candidate pool is truncated before hits are grouped by recording and chunk. Let $r_1(c)$ and $r_2(c)$ denote the one-based global ranks of a chunk's two highest-ranked units among the returned candidates. Inspired by reciprocal rank fusion \cite{rrf}, the implementation scores a moment as
+\begin{equation}
+S(c)=\frac{1}{10+r_1(c)}+
+\begin{cases}
+\dfrac{0.5}{10+r_2(c)} & \text{if a second hit exists},\\[3pt]
+0 & \text{otherwise}.
+\end{cases}
+\label{eq:rank}
+\end{equation}
+Limiting the contribution to two hits prevents a chunk from accumulating score from every stored description. The second hit is not required to come from a different modality. The resulting score depends on the candidate ranking and is not a relevance probability or an absolute similarity threshold. In particular, a rank-one moment exists even for an unrelated query when the index supplies candidates.
+
+\subsection{Synthesis and source presentation}
+The search path returns ranked moments without requiring an answer. The question-answering path supplies full moment evidence to a text model and also consults available summaries and chapters for up to five scoped videos. The model is instructed to restrict its answer to the evidence, attach minute-and-second citations, and say when evidence is insufficient. The chat agent can also read a transcript, an individual chunk, or a specific aggregate without asking the backend to synthesize an answer every time. The application can show both the text response and a clip reel, with citations referring to timestamps on the original media timeline (Fig.~\ref{fig:evidence}).
+
+\begin{figure}[!t]
+\centering
+\begin{tikzpicture}[
+    x=1.08cm,y=0.76cm,
+    smalltext/.style={font=\footnotesize},
+    match/.style={fill=cyan!13,draw=blue!45,rounded corners=1pt}]
+  \node[smalltext,anchor=west] at (0,1.55) {\textbf{Query:} When is the box moved?};
+  \node[smalltext,anchor=west] at (0,0.94) {\textbf{Timeline of the returned recording}};
+  \draw[gray!60] (0,0) rectangle (2,0.48);
+  \draw[match] (2,0) rectangle (4,0.48);
+  \draw[gray!60] (4,0) rectangle (6,0.48);
+  \node[smalltext] at (3,0.24) {Matched chunk};
+  \foreach \x/\t in {0/0:00,2/0:20,4/0:40,6/1:00}
+    \node[smalltext] at (\x,-0.24) {\t};
+  \node[smalltext,anchor=west] at (0,-0.88) {\textbf{Clip reel:} Seek to 0:20 and play through 0:40.};
+\end{tikzpicture}
+\caption{Illustrative citation-to-playback mapping. The interval is a returned
+chunk, not a prediction of the exact onset and end of the action.}
+\label{fig:evidence}
+\end{figure}
+
+A citation is a useful link, not an entailment check. The model can still cite an irrelevant moment, mistake a scene description for an observation, or draw an inference not supported by the footage. For example, footage may support that a box was moved without revealing who owned it. We therefore treat answer correctness, citation support, and abstention as distinct outcomes in the proposed evaluation.
+
+\input{evaluation}
+
+\section{Discussion}
+\label{sec:discussion}
+\subsection{What the measurements establish}
+The current pilot shows that scene-derived boundaries can recover clean transitions missed by a fixed grid, at the cost of decoding and scoring frames. The result should not be extrapolated to gradual changes, handheld video, or actions inside an otherwise static shot. The local retrieval experiment shows that reading the file-backed index and ranking its vectors can itself become material as the search scope grows. It does not isolate file parsing from cosine computation or justify a specific corpus-size limit. A persistent in-memory representation or server-side index is a candidate comparison, not a measured improvement.
+
+The earlier backend measurements describe engineering decisions made for a different index, model configuration, and score scale. They provide provenance for the project but cannot substitute for a matched comparison. In particular, transferring a similarity threshold from that backend to the rank-based score in \eqref{eq:rank} would be invalid. A head-to-head comparison should hold the footage, questions, evidence labels, and compute conditions fixed and report the two configurations explicitly.
+
+\subsection{Threats to validity and deployment limits}
+There are three main threats to validity. First, the pilot deliberately isolates components and uses synthetic inputs; it does not cover real visual or linguistic variation. Second, the retrieval timing uses warm runs on one machine, with media and index files on local storage. Cloud cache misses, provider latency, concurrent demand, and memory pressure can change both median and tail behavior. Third, the previous prototype report is a secondary source for the historical figures; the current artifact does not reproduce its raw trials. The appropriate comparison is a new, pre-specified experiment, not an aggregate across the result sets.
+
+The system can index sensitive speech and images even when video bytes are stored separately. Hosted vision calls may transmit selected frames, embedding calls may transmit extracted text, and answer generation may transmit retrieved passages. A deployment should verify that these transfers, storage retention, and media access are appropriate for the recordings. In settings with safety, legal, or privacy consequences, verify evidence from original footage and do not equate the retrieval of a similar event with an identification or finding.
+
+\section{Conclusion}
+\label{sec:conclusion}
+FalconVQA indexes visual and spoken evidence on a common timeline and makes retrieved moments playable within a conversational repository interface. The current component pilot demonstrates accurate boundary recovery for deliberately clean transitions and quantifies the latency of local file-backed retrieval over three synthetic corpus sizes. It does not establish retrieval or answer quality on real footage. The accompanying evaluation protocol defines how to measure temporal localization, citation support, and abstention independently, so future updates can test whether the implemented workflow delivers verifiable evidence at repository scale.
+
+\section*{Acknowledgment}
+The authors thank Dr. Pratiba D and the Centre of Excellence in Computer Vision Research at RV College of Engineering for project guidance.
+
+\input{references}
+\EOD
+\end{document}

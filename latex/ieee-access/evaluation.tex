@@ -1,0 +1,89 @@
+\section{Evaluation}
+\label{sec:evaluation}
+We report two distinct evidence sets: a reproducible component pilot for the current VIDRA backend and historical results from the earlier prototype. They differ in both method and scope and are not successive rows in a controlled comparison. We close with the protocol for an end-to-end evaluation of the current system.
+
+\subsection{Current backend: component pilot}
+\label{sec:pilot}
+The pilot used VIDRA 3.0.0 at repository revision \texttt{39081b9}, an Apple M2 with 8~GB of memory, macOS 26.0.1, and Python 3.12.14. The script generates its own footage and index. Neither experiment calls hosted models, uses private footage, or requires a production service. Reported p95 values are empirical percentiles of the timed runs, not bounds on deployed latency.
+
+\paragraph{Boundary placement.}
+We encoded three silent, 60-s H.264 videos at 320$\times$180 and 20 frames/s. Each alternates between dark and light frames at three known, deliberately off-grid transition times. The transitions align with the default scene detector's 250-ms sampling grid. We compared the default fixed 20-s grid with the default scene policy. A predicted interior boundary is a match when it is within 250~ms of an unmatched reference boundary. With $M$ matches, $P$ predictions and $G$ references, pooled boundary F1 is $2M/(P+G)$. We excluded media generation, media probing, and one warm-up per clip and policy; 30 observations per policy cover boundary evidence extraction and timeline generation.
+
+\begin{table}[!t]
+\caption{Current VIDRA: Boundary Pilot on Three Synthetic Videos}
+\label{tab:boundaries}
+\centering
+\small
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+\textbf{Policy} & \textbf{Hits/pred.} & $\boldsymbol{F_1}$ & \textbf{Median} & \textbf{p95} \\
+\midrule
+Uniform & 0/6 & 0.00 & 0.36~ms & 0.52~ms \\
+Scene & 9/9 & 1.00 & 47.80~ms & 153.16~ms \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:boundaries} shows that the scene policy found all nine synthetic cuts, while the fixed grid found none by construction. The scene policy has a higher cost because it decodes and compares frames; the uniform policy computes intervals without scoring the picture. Repeated timings increase the sample for latency, not the number of unique cut annotations. This trial is a positive control for the boundary detector, not evidence about event localization inside scenes.
+
+\paragraph{File-backed search.}
+We timed the current file-backed search and moment aggregation using 100, 1,000, and 5,000 synthetic units, with one seeded, 1,536-dimensional vector per chunk and 100 chunks per synthetic recording. We provided query vectors directly and checked that a vector's own chunk ranked first. Each query reads the index, scores the vectors, and reduces up to 20 candidates to five moments. There were 15 timed queries per size after one warm-up. These times include JSON parsing and ranking, but exclude query embedding, answer synthesis, network calls, and cloud cache misses.
+
+\begin{table}[!t]
+\caption{Current VIDRA: Warm Local Retrieval Latency}
+\label{tab:retrieval}
+\centering
+\small
+\begin{tabular}{@{}rrrr@{}}
+\toprule
+\textbf{Units} & \textbf{Videos} & \textbf{Median (ms)} & \textbf{p95 (ms)} \\
+\midrule
+100 & 1 & 12.2 & 15.4 \\
+1,000 & 10 & 144.4 & 283.1 \\
+5,000 & 50 & 770.9 & 1,154.3 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Median search time increases with scope across the three measured operating points (Table~\ref{tab:retrieval}). This is consistent with the implementation reading and scoring all in-scope units; the data do not separate lookup, parsing, scoring, and allocation costs. The exact-vector check verifies that the search and moment mapping can return a known match. It is not a semantic accuracy measurement, and one unit per chunk does not exercise the relevance benefit of the second term in \eqref{eq:rank}.
+
+\subsection{Historical results: predecessor backend}
+\label{sec:legacy}
+Before the VIDRA integration, the prototype used a different boundary pipeline and local embeddings in an embedded Qdrant index. Its development report documents seven publicly sourced fixtures, mainly short fixed-camera recordings, with one dialogue clip \cite{legacy}. Table~\ref{tab:legacy} preserves the reported exploratory findings. The historical report does not provide per-query raw scores or sample counts for these ranges, so we do not interpret them as estimates of population accuracy or report confidence intervals. Its top-three rule is an acceptance criterion, not a measured Recall@3 value. We likewise do not report the prototype's latency budgets as measured runtimes.
+
+\begin{table}[!t]
+\caption{Predecessor Only: Exploratory Findings From the Project Report \cite{legacy}}
+\label{tab:legacy}
+\centering
+\small
+\begin{tabularx}{\columnwidth}{@{}p{0.28\columnwidth}X@{}}
+\toprule
+\textbf{Check} & \textbf{Historically reported observation} \\
+\midrule
+Presence scoring & Observed present-content scores $\geq 0.665$ and absent-content scores $\leq 0.524$. \\
+Person linking & Co-visible, known-different people scored as high as $0.941$; known-same pairs scored $0.889$--$0.915$. A single similarity threshold did not separate those cases. \\
+Aggregate routing & Question-level mean scores ranged from $0.47$ to $0.56$; the prototype used relative selection. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The historical score ranges are not comparable to the current moment score in \eqref{eq:rank}. Their main value is to identify hypotheses to retest: whether absent-content queries get unwarranted matches, whether repeated observations are distinguishable from look-alikes, and whether summaries or chapters are helpful for broad questions.
+
+\subsection{Protocol for real-video evaluation}
+\label{sec:protocol}
+\paragraph{Corpus and annotation.}
+Use a public, license-compatible subset of QVHighlights for query-to-moment evaluation \cite{qvhighlights}. Evaluate single-video localization on its supplied scope, and add an explicitly documented repository setting with distractor recordings. To measure open-ended grounded answering, curate a separate collection that includes interviews or lectures, silent fixed-camera sequences, and videos requiring visual and speech evidence together. Split by source video, keeping calibration recordings separate from the test set. For each question, independent annotators mark answerability, an accepted answer or key claims, and one or more supporting intervals. Resolve disagreements before scoring. Include unanswerable questions and closely related distractors; publish counts, splits, and annotation instructions.
+
+\paragraph{Comparisons and metrics.}
+Compare transcript-only, vision-only, and combined evidence on matched recordings and settings. Compare fixed and scene segmentation where video is available, reporting chunk counts as well as accuracy. For QA, compare moments-only with moments plus summaries and chapters using the same generator and budget. A retrieval counts as a hit only if it is in the correct recording and its best temporal intersection over union (tIoU) with an annotated interval meets a prespecified threshold:
+\begin{equation}
+\operatorname{tIoU}(I,G)=
+\frac{\operatorname{duration}(I\cap G)}{\operatorname{duration}(I\cup G)}.
+\end{equation}
+Report Recall@1 and Recall@5 at tIoU thresholds of 0.3 and 0.5, plus median absolute onset error for matched intervals. For generated answers, separately report answer correctness, the fraction of citations that support their associated claims, and the fraction of factual claims covered by a supporting citation. Report abstention on unanswerable questions and false abstention on answerable ones. Break down results by evidence modality and report paired intervals of uncertainty, resampling at the recording level.
+
+\paragraph{Systems measurements.}
+Log hardware, storage configuration, model identifiers and versions, corpus duration, and number of indexed units. Measure cold and warm query latency, time to playable evidence, ingest wall time per video minute, and provider call counts separately. Report median and p95 with the repetition count and concurrency. This protocol can distinguish a better retriever from an engine that is simply serving a smaller corpus or using a warm cache.
+
+\subsection{Reproducibility}
+The artifact accompanying this draft supplies the pilot script and its raw timing samples. To compare a later run, use the source revision and runtime versions recorded with the samples, and preserve both the benchmark configuration and observed output. The semantic-quality and end-to-end measurements described in Section~\ref{sec:protocol} were not run for this draft.

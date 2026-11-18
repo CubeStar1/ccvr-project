@@ -1,0 +1,33 @@
+\begin{figure*}[!t]
+\centering
+\begin{tikzpicture}[
+    node distance=8mm,
+    cell/.style={draw=black!30, fill=blue!3, rounded corners=2pt,
+      align=center, minimum width=30mm, minimum height=13mm, font=\small},
+    store/.style={cell,fill=cyan!9},
+    flow/.style={-{Stealth[length=2.2mm]},semithick,draw=black!70},
+    link/.style={flow,dashed},
+    lane/.style={font=\footnotesize\bfseries,anchor=east,xshift=-3mm}]
+  \node[cell] (source) {\textbf{Video source}\\File or URL};
+  \node[cell,right=of source] (grid) {\textbf{Ingest + segment}\\Shared timeline};
+  \node[cell,right=of grid] (evidence) {\textbf{Evidence}\\Frame text + speech};
+  \node[store,right=of evidence] (index) {\textbf{VIDRA artifacts}\\Index + aggregates};
+  \node[cell,below=of source] (prompt) {\textbf{User question}\\Project context};
+  \node[cell,below=of grid] (tools) {\textbf{Agent tools}\\Resolve video scope};
+  \node[cell,below=of evidence] (search) {\textbf{Query service}\\Rank or synthesize};
+  \node[cell,below=of index] (play) {\textbf{Workspace}\\Answer + clip reel};
+  \node[lane,left=of source,node distance=0pt] {OFFLINE};
+  \node[lane,left=of prompt,node distance=0pt] {ONLINE};
+  \draw[flow] (source) -- (grid);
+  \draw[flow] (grid) -- (evidence);
+  \draw[flow] (evidence) -- (index);
+  \draw[flow] (prompt) -- (tools);
+  \draw[flow] (tools) -- (search);
+  \draw[flow] (search) -- (play);
+  \draw[link] (index.south west) -- (search.north east);
+\end{tikzpicture}
+\caption{FalconVQA separates ingestion from interactive search. The dashed
+arrow denotes access to indexed artifacts. The workspace opens the original
+media at the returned interval.}
+\label{fig:architecture}
+\end{figure*}
